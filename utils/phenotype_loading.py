@@ -218,3 +218,13 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory, force
     mt = ht._unlocalize_entries('bool_codes', 'all_codes', ['icd_code'])
     coding_ht = hl.import_table(icd_codings_path, impute=True, key='coding')
     return mt.annotate_cols(**coding_ht[mt.col_key]).annotate_globals(code_locations=code_locations)
+
+
+def read_covariate_data(pre_phesant_data_path):
+    ht = hl.import_table(pre_phesant_data_path, impute=True, min_partitions=100, missing='', key='userId')
+    columns = {
+        'sex': 'x22001_0_0',
+        'age': 'x21022_0_0'
+    }
+    columns.update(**{f'pc{i}': f'x22009_0_{i}' for i in range(1, 41)})
+    return ht.select(*columns.values()).rename({v: k for k, v in columns.items()}).annotate_globals(coding_source=columns)
