@@ -220,6 +220,33 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory, force
     return mt.annotate_cols(**coding_ht[mt.col_key]).annotate_globals(code_locations=code_locations)
 
 
+def get_full_icd_data_description(icd_codings_path, temp_path='hdfs://codings'):
+    """
+    Recursively get full ICD description
+
+    :param str icd_codings_path: Input coding19.tsv
+    :param str temp_path: Temporary path to write intermediate files
+    :return: Table with full descriptions
+    :rtype: Table
+    """
+    icd_ht = hl.import_table(icd_codings_path, impute=True, key='coding')
+    icd_ht = icd_ht.annotate(original_node_id=icd_ht.node_id, original_parent_id=icd_ht.parent_id, short_meaning=icd_ht.meaning)
+    icd_ht = icd_ht.checkpoint(f'{temp_path}/icd_codings.ht', overwrite=True)
+    orig_icd_ht = hl.read_table(f'{temp_path}/icd_codings.ht').key_by('node_id')
+    i = 0
+    while True:
+        icd_ht = icd_ht.checkpoint(f'{temp_path}/icd_codings_{i}.ht', overwrite=True)
+        remaining = icd_ht.aggregate(hl.agg.count_where(icd_ht.parent_id != 0))
+        print(f'Phenos remaining: {remaining}')
+        if not remaining:
+            break
+        icd_join = orig_icd_ht[icd_ht.parent_id]
+        icd_ht = icd_ht.annotate(meaning=hl.cond(icd_ht.parent_id == 0, icd_ht.meaning, icd_join.meaning + ' | ' + icd_ht.meaning),
+                                 parent_id=hl.cond(icd_ht.parent_id == 0, icd_ht.parent_id, icd_join.parent_id))
+        i += 1
+    return icd_ht.transmute(node_id=icd_ht.original_node_id, parent_id=icd_ht.original_parent_id)
+
+
 def read_covariate_data(pre_phesant_data_path):
     ht = hl.import_table(pre_phesant_data_path, impute=True, min_partitions=100, missing='', key='userId')
     columns = {
