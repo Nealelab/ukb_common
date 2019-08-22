@@ -217,7 +217,17 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory, force
     ht = ht.annotate_globals(all_codes=all_codes.map(lambda x: hl.struct(icd_code=x)))
     mt = ht._unlocalize_entries('bool_codes', 'all_codes', ['icd_code'])
     coding_ht = hl.import_table(icd_codings_path, impute=True, key='coding')
-    return mt.annotate_cols(**coding_ht[mt.col_key]).annotate_globals(code_locations=code_locations)
+    mt = mt.annotate_cols(**coding_ht[mt.col_key], truncated=False).annotate_globals(code_locations=code_locations)
+    mt = mt.checkpoint(f'{temp_directory}/raw_icd.mt', _read_if_exists=not force_overwrite_intermediate)
+    trunc_mt = mt.filter_cols((hl.len(mt.icd_code) == 3) | (hl.len(mt.icd_code) == 4))
+    trunc_mt = trunc_mt.key_cols_by(icd_code=trunc_mt.icd_code[:3])
+    trunc_mt = trunc_mt.group_cols_by('icd_code').aggregate_entries(
+        **{code: hl.agg.any(trunc_mt[code]) for code in code_locations}
+    ).aggregate_cols(n_phenos_truncated=hl.agg.count()).result()
+    trunc_mt = trunc_mt.filter_cols(trunc_mt.n_phenos_truncated > 1)
+    trunc_mt = trunc_mt.annotate_cols(**mt.cols().drop('truncated', 'code_locations')[trunc_mt.icd_code],
+                                      truncated=True).drop('n_phenos_truncated')
+    return mt.union_cols(trunc_mt)
 
 
 def get_full_icd_data_description(icd_codings_path, temp_path='hdfs://codings'):
