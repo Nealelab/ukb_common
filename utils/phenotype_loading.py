@@ -72,9 +72,8 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str):
     )
     return mt.key_cols_by(
         pheno=hl.int(mt.phesant_pheno.split('_')[0]),
-        coding=hl.cond(hl.len(mt.phesant_pheno.split('_')) > 1,
-                       category_type(mt.phesant_pheno.split('_')[1]),
-                       category_type(''))  # NB: This would error for categoricals if there were any missing a value
+        coding=hl.case().when(hl.len(mt.phesant_pheno.split('_')) > 1, category_type(mt.phesant_pheno.split('_')[1]))
+            .or_error('A categorical was found not in the format of int_int')
     )
 
 
