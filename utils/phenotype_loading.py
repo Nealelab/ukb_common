@@ -184,7 +184,9 @@ def combine_datasets(mt_path_dict: dict, summary_tsv_path_dict: dict,
     return mt
 
 
-def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory, force_overwrite_intermediate: bool = False):
+def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory,
+                  force_overwrite_intermediate: bool = False,
+                  include_dates: bool = False, icd9: bool = False):
     """
     Load raw (pre-PHESANT) phenotype data and extract ICD codes into hail MatrixTable with booleans as entries
 
@@ -192,21 +194,38 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory, force
     :param str icd_codings_path: Input coding metadata
     :param str temp_directory: Temp bucket/directory to write intermediate file
     :param bool force_overwrite_intermediate: Whether to overwrite intermediate loaded file
+    :param bool include_dates: Whether to also load date data (not implemented yet)
+    :param bool icd9: Whether to load ICD9 data
     :return: MatrixTable with ICD codes
     :rtype: MatrixTable
     """
-    code_locations = {
-        'primary_codes': '41202',
-        'secondary_codes': '41204',
-        'external_codes': '41201',
-        'cause_of_death_codes': '40001'
+    if icd9:
+        code_locations = {
+            'primary_codes': '41203',
+            'secondary_codes': '41205'
+        }
+    else:
+        code_locations = {
+            'primary_codes': '41202',
+            'secondary_codes': '41204',
+            'external_codes': '41201',
+            'cause_of_death_codes': '40001'
+        }
+    date_locations = {
+        'primary_codes': '41262'
     }
-    ht = hl.import_table(pre_phesant_data_path, impute=True, min_partitions=100, missing='', key='userId')
-    ht = ht.checkpoint(f'{temp_directory}/pre_phesant.ht', _read_if_exists=True and not force_overwrite_intermediate)
+    ht = hl.import_table(pre_phesant_data_path, impute=not icd9, min_partitions=100, missing='', key='userId')
+    ht = ht.checkpoint(f'{temp_directory}/pre_phesant.ht', _read_if_exists=not force_overwrite_intermediate)
     all_phenos = list(ht.row_value)
-    ht = ht.select(
-        **{code: [ht[x] for x in all_phenos if x.startswith(f'x{loc}')] for code, loc in code_locations.items()})
-    ht = ht.annotate(**{code: ht[code].filter(lambda x: hl.is_defined(x)) for code in code_locations})
+    fields_to_select = {code: [ht[x] for x in all_phenos if x.startswith(f'x{loc}')] for code, loc in code_locations.items()}
+    if include_dates:
+        fields_to_select.update({f'date_{code}': [ht[x] for x in all_phenos if x.startswith(f'x{loc}')] for code, loc in date_locations.items()})
+    ht = ht.select(**fields_to_select)
+    ht = ht.annotate(
+        **{code: ht[code].filter(lambda x: hl.is_defined(x)) for code in code_locations},
+        # **{f'date_{code}': ht[code].filter(lambda x: hl.is_defined(x)) for code in date_locations}
+    )
+    # ht = ht.annotate(primary_codes_with_date=hl.dict(hl.zip(ht.primary_codes, ht.date_primary_codes)))
     all_codes = hl.sorted(hl.array(ht.aggregate(
         hl.agg.explode(lambda c: hl.agg.collect_as_set(c),
                        hl.flatmap(lambda x: x, [ht[code] for code in code_locations])),
@@ -215,18 +234,22 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory, force
         bool_codes=all_codes.map(lambda x: hl.struct(**{code: ht[code].contains(x) for code in code_locations})))
     ht = ht.annotate_globals(all_codes=all_codes.map(lambda x: hl.struct(icd_code=x)))
     mt = ht._unlocalize_entries('bool_codes', 'all_codes', ['icd_code'])
-    coding_ht = hl.import_table(icd_codings_path, impute=True, key='coding')
-    mt = mt.annotate_cols(**coding_ht[mt.col_key], truncated=False).annotate_globals(code_locations=code_locations)
+    mt = mt.annotate_entries(any_codes=hl.any(lambda x: x, list(mt.entry.values())))
+    # mt = mt.annotate_entries(date=hl.cond(mt.primary_codes, mt.primary_codes_with_date[mt.icd_code], hl.null(hl.tstr)))
+    mt = mt.annotate_cols(truncated=False).annotate_globals(code_locations=code_locations)
     mt = mt.checkpoint(f'{temp_directory}/raw_icd.mt', _read_if_exists=not force_overwrite_intermediate)
     trunc_mt = mt.filter_cols((hl.len(mt.icd_code) == 3) | (hl.len(mt.icd_code) == 4))
     trunc_mt = trunc_mt.key_cols_by(icd_code=trunc_mt.icd_code[:3])
     trunc_mt = trunc_mt.group_cols_by('icd_code').aggregate_entries(
-        **{code: hl.agg.any(trunc_mt[code]) for code in code_locations}
+        **{code: hl.agg.any(trunc_mt[code]) for code in list(code_locations.keys()) + ['any_codes']}
     ).aggregate_cols(n_phenos_truncated=hl.agg.count()).result()
     trunc_mt = trunc_mt.filter_cols(trunc_mt.n_phenos_truncated > 1)
     trunc_mt = trunc_mt.annotate_cols(**mt.cols().drop('truncated', 'code_locations')[trunc_mt.icd_code],
                                       truncated=True).drop('n_phenos_truncated')
-    return mt.union_cols(trunc_mt)
+    mt = mt.union_cols(trunc_mt)
+    coding_ht = hl.import_table(icd_codings_path, impute=True, key='coding')
+    return mt.annotate_cols(**coding_ht[mt.col_key])
+
 
 
 def get_full_icd_data_description(icd_codings_path, temp_path='hdfs://codings'):
