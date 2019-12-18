@@ -99,6 +99,34 @@ def get_missing_codings(ht):
             f.write(r.text)
 
 
+def get_all_codings():
+    """
+    Download all coding data files from UKB website
+    """
+    import requests
+    coding_prefix = '/tmp/coding'
+    all_codings = requests.post(url='http://biobank.ndph.ox.ac.uk/showcase/scdown.cgi', data={'fmt': 'txt', 'id': 2})
+    all_codings = all_codings.text.strip().split('\n')[1:]
+    hts = []
+    for coding_list in all_codings:
+        coding = coding_list.split('\t')[0]
+        r = requests.post(url='http://biobank.ndph.ox.ac.uk/showcase/codown.cgi', data={'id': coding})
+        req_data = r.text
+        if r.status_code != 200 or not req_data or req_data.startswith('<!DOCTYPE HTML>'):
+            print(f'Issue with {coding}: {r.text}')
+            continue
+        with open(f'{coding_prefix}{coding}.tsv', 'w') as f:
+            f.write(req_data)
+        hl.hadoop_copy(f'file://{coding_prefix}{coding}.tsv', f'{coding_prefix}{coding}.tsv')
+        ht = hl.import_table(f'{coding_prefix}{coding}.tsv')
+        if 'node_id' not in ht.row:
+            ht = ht.annotate(node_id=hl.null(hl.tstr), parent_id=hl.null(hl.tstr), selectable=hl.null(hl.tstr))
+        ht = ht.annotate(coding_id=hl.int(coding))
+        hts.append(ht)
+    full_ht = hts[0].union(*hts[1:]).key_by('coding_id', 'coding')
+    return full_ht.repartition(10)
+
+
 def get_phesant_reassignments(phesant_summary):
     """
     Helper function for add_coding_information.
