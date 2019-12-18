@@ -28,7 +28,9 @@ def main(args):
     hl.init(master=f'local[{args.n_threads}]',
             log=hl.utils.timestamp_path(os.path.join(tempfile.gettempdir(), 'extract_vcf'), suffix='.log'),
             default_reference=args.reference)
-    mt = get_filtered_mt(args.mt_path, args.meta_ht_path, args.sample_mapping_file, args.qual_ht_path)
+
+    load_module = importlib.import_module(args.load_module)
+    mt = getattr(load_module, args.load_mt_function)()
 
     if args.gene_map_ht_path is None:
         interval = [hl.parse_locus_interval(args.interval)]
@@ -66,30 +68,11 @@ def main(args):
         hl.export_vcf(mt, args.output_file)
 
 
-def get_filtered_mt(mt_path, meta_ht_path, sample_mapping_file, qual_ht_path):
-    mt = hl.read_matrix_table(mt_path)
-    meta_ht = hl.read_table(meta_ht_path)
-    meta_ht = meta_ht.filter(~meta_ht.is_filtered & (meta_ht.hybrid_pop == '12'))
-    sample_mapping_ht = hl.import_table(sample_mapping_file, key='eid_sample', delimiter=',')
-    mt = mt.annotate_cols(exome_id=sample_mapping_ht[mt.s.split('_')[1]].eid_26041,
-                          meta=meta_ht[mt.col_key]).key_cols_by('exome_id')
-    mt = mt.filter_cols(hl.is_defined(mt.meta) & hl.is_defined(mt.exome_id))
-    if qual_ht_path is None:
-        warnings.warn('--qual_ht_path is not specified. Variants will be unfiltered.')
-    else:
-        qual_ht = hl.read_table(qual_ht_path)
-        qual_ht = qual_ht.filter(hl.len(qual_ht.filters) == 0)
-        mt = mt.filter_rows(hl.is_defined(qual_ht[mt.row_key]))
-    return mt
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--mt_path', help='Path to full MT', required=True)
-    parser.add_argument('--sample_mapping_file', help='Path to sample mapping file', required=True)
-    parser.add_argument('--meta_ht_path', help='Path to sample meta HT', required=True)
-    parser.add_argument('--qual_ht_path', help='Path to variant filters HT')
+    parser.add_argument('--load_module', help='Module to load with helper functions', required=True)
+    parser.add_argument('--load_mt_function', help='Function in module to load analysis-ready MatrixTable', default='get_filtered_mt')
 
     parser.add_argument('--gene_map_ht_path', help='Path to gene map HT')
     parser.add_argument('--groups', help='Which variant groupings to use')
