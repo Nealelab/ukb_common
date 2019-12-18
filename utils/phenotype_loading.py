@@ -45,7 +45,7 @@ def get_codings():
     return full_ht.repartition(10)
 
 
-def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str):
+def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('age', 'sex')):
     """
     Input Hail Table with lots of phenotype row fields, distill into
     MatrixTable with either categorical or continuous data types
@@ -65,10 +65,17 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str):
         filter_type = {hl.tint, hl.tfloat}
         value_type = hl.float
 
-    pheno_ht = pheno_ht.select(**{x: value_type(v) for x, v in pheno_ht.row_value.items() if v.dtype in filter_type})
+    special_fields_to_include = []
+    fields = set(pheno_ht.row_value)
+    for field in special_fields:
+        if field in fields:
+            fields.remove(field)
+            special_fields_to_include.append(field)
+    select_fields = {x: value_type(pheno_ht[x]) for x in fields if pheno_ht[x].dtype in filter_type}
+    pheno_ht = pheno_ht.select(*special_fields_to_include, **select_fields)
 
     mt = pheno_ht.to_matrix_table_row_major(
-        columns=list(pheno_ht.row_value), entry_field_name='value', col_field_name='phesant_pheno'
+        columns=list(select_fields), entry_field_name='value', col_field_name='phesant_pheno'
     )
     return mt.key_cols_by(
         pheno=hl.int(mt.phesant_pheno.split('_')[0]),
