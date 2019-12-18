@@ -25,8 +25,7 @@ def impute_missing_gp(mt, location: str = 'gp', mean_impute: bool = True):
 def main(args):
     hl.init(master=f'local[{args.n_threads}]',
             log=hl.utils.timestamp_path(os.path.join(tempfile.gettempdir(), 'extract_vcf'), suffix='.log'),
-            default_reference='GRCh38')
-    gene_ht = hl.read_table(args.gene_map_ht_path)
+            default_reference=args.reference)
     mt = hl.read_matrix_table(args.mt_path)
     meta_ht = hl.read_table(args.meta_ht_path)
     meta_ht = meta_ht.filter(~meta_ht.is_filtered & (meta_ht.hybrid_pop == '12'))
@@ -34,16 +33,20 @@ def main(args):
     qual_ht = hl.read_table(args.qual_ht_path)
     qual_ht = qual_ht.filter(hl.len(qual_ht.filters) == 0)
 
-    if args.gene is not None:
-        gene_ht = gene_ht.filter(gene_ht.gene_symbol == args.gene)
-        interval = gene_ht.aggregate(hl.agg.take(gene_ht.interval, 1), _localize=False)
-    else:
+    if args.gene_map_ht_path is None:
         interval = [hl.parse_locus_interval(args.interval)]
-        gene_ht = hl.filter_intervals(gene_ht, interval)
+    else:
+        gene_ht = hl.read_table(args.gene_map_ht_path)
+        if args.gene is not None:
+            gene_ht = gene_ht.filter(gene_ht.gene_symbol == args.gene)
+            interval = gene_ht.aggregate(hl.agg.take(gene_ht.interval, 1), _localize=False)
+        else:
+            interval = [hl.parse_locus_interval(args.interval)]
+            gene_ht = hl.filter_intervals(gene_ht, interval)
 
-    gene_ht = gene_ht.filter(hl.set(args.groups.split(',')).contains(gene_ht.annotation))
-    gene_ht.select(group=gene_ht.gene_id + '_' + gene_ht.gene_symbol + '_' + gene_ht.annotation, variant=hl.delimit(gene_ht.variants, '\t')
-                   ).key_by().drop('start').export(args.group_output_file, header=False)
+        gene_ht = gene_ht.filter(hl.set(args.groups.split(',')).contains(gene_ht.annotation))
+        gene_ht.select(group=gene_ht.gene_id + '_' + gene_ht.gene_symbol + '_' + gene_ht.annotation, variant=hl.delimit(gene_ht.variants, '\t')
+                       ).key_by().drop('start').export(args.group_output_file, header=False)
 
     # TODO: possible minor optimization: filter output VCF to only variants in `gene_ht.variants`
     if not args.no_adj:
@@ -70,13 +73,13 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--gene_map_ht_path', help='Path to gene map HT', required=True)
+    parser.add_argument('--gene_map_ht_path', help='Path to gene map HT')
     parser.add_argument('--mt_path', help='Path to full MT', required=True)
     parser.add_argument('--sample_mapping_file', help='Path to sample mapping file', required=True)
     parser.add_argument('--meta_ht_path', help='Path to sample meta HT', required=True)
     parser.add_argument('--qual_ht_path', help='Path to variant filters HT', required=True)
 
-    parser.add_argument('--groups', help='Which variant groupings to use', required=True)
+    parser.add_argument('--groups', help='Which variant groupings to use')
     parser.add_argument('--gene', help='Gene to export')
     parser.add_argument('--interval', help='Interval to export')
 
@@ -85,6 +88,7 @@ if __name__ == '__main__':
                                                       '(default: set to hom ref)', action='store_true')
     parser.add_argument('--export_bgen', help='Export BGEN instead of VCF', action='store_true')
     parser.add_argument('--callrate_filter', help='Impose 95% callrate filter', action='store_true')
+    parser.add_argument('--reference', help='Reference genome to use', default='GRCh38', choices=('GRCh37', 'GRCh38'))
 
     parser.add_argument('--group_output_file', help='Output file for variant groupings', required=True)
     parser.add_argument('--output_file', help='Output file', required=True)
@@ -93,6 +97,13 @@ if __name__ == '__main__':
 
     if int(args.gene is not None) + int(args.interval is not None) != 1:
         sys.exit('Error: One and only one of --gene or --interval must be specified')
+
+    if args.gene_map_ht_path is None:
+        if args.interval is None:
+            sys.exit('Error: If --gene_map_ht_path is not specified, --interval must be specified')
+    else:
+        if args.groups is None:
+            sys.exit('Error: If --gene_map_ht_path is specified, --groups must be specified')
 
     main(args)
 

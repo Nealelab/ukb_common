@@ -20,7 +20,7 @@ def main(args):
         mt = mt.filter_cols((mt.pheno == hl.int(args.pheno)) & (mt.coding == coding))
         if args.data_type == 'categorical':
             mt = mt.annotate_entries(**{field: hl.int(value) for field, value in mt.entry.items()})
-    ht = mt.entries().key_by('userId')
+    ht = mt.key_cols_by().entries()
     ht = ht.annotate(**cov_ht[ht.key])
     ht.export(args.output_file)
 
