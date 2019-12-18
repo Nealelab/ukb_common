@@ -57,7 +57,8 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
     :rtype: MatrixTable
     """
     if data_type == 'categorical':
-        category_type = hl.int
+        # category_type = hl.int
+        category_type = hl.str
         filter_type = {hl.tbool}
         value_type = hl.bool
     else:
@@ -79,7 +80,9 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
     )
     return mt.key_cols_by(
         pheno=hl.int(mt.phesant_pheno.split('_')[0]),
-        coding=hl.case().when(hl.len(mt.phesant_pheno.split('_')) > 1, category_type(mt.phesant_pheno.split('_')[1]))
+        coding=hl.case()
+            .when(hl.len(mt.phesant_pheno.split('_')) == 1, category_type(mt.phesant_pheno))
+            .when(hl.len(mt.phesant_pheno.split('_')) > 1, category_type(mt.phesant_pheno.split('_')[1]))
             .or_error('A categorical was found not in the format of int_int')
     )
 
@@ -324,3 +327,17 @@ def read_covariate_data(pre_phesant_data_path):
     }
     columns.update(**{f'pc{i}': f'x22009_0_{i}' for i in range(1, 41)})
     return ht.select(*columns.values()).rename({v: k for k, v in columns.items()}).annotate_globals(coding_source=columns)
+
+
+def make_cooccurrence_mt(mt: hl.MatrixTable):
+    mt = hl.read_matrix_table(get_ukb_pheno_mt_path('icd'))
+    mt = mt.annotate_cols(n_cases=hl.agg.sum(mt.any_codes))
+    mt = mt.filter_cols(mt.n_cases >= 500).add_col_index()
+    ht = mt.key_cols_by('col_idx').cols()
+    bm = hl.linalg.BlockMatrix.from_entry_expr(mt.any_codes)
+    bm = bm.T @ bm
+    pheno_ht = bm.entries()
+    pheno_ht = pheno_ht.annotate(i_data=ht[pheno_ht.i], j_data=ht[pheno_ht.j])
+    pheno_ht = pheno_ht.annotate(prop_overlap=pheno_ht.entry / pheno_ht.i_data.n_cases)
+    # pheno_ht = pheno_ht.checkpoint(f'{pheno_folder}/pheno_combo_explore/pheno_overlap.ht')
+
