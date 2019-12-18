@@ -46,8 +46,8 @@ def main(args):
         gene_ht = gene_ht.filter(hl.set(args.groups.split(',')).contains(gene_ht.annotation))
         gene_ht.select(group=gene_ht.gene_id + '_' + gene_ht.gene_symbol + '_' + gene_ht.annotation, variant=hl.delimit(gene_ht.variants, '\t')
                        ).key_by().drop('start').export(args.group_output_file, header=False)
+        # TODO: possible minor optimization: filter output VCF to only variants in `gene_ht.variants`
 
-    # TODO: possible minor optimization: filter output VCF to only variants in `gene_ht.variants`
     if not args.no_adj:
         mt = mt.filter_entries(mt.adj)
 

@@ -13,13 +13,12 @@ def main(args):
     mt = hl.read_matrix_table(args.input_file)
     if args.data_type == 'icd':
         mt = mt.filter_cols(mt.icd_code == args.pheno)
-        mt = mt.annotate_entries(**{field: hl.int(value) for field, value in mt.entry.items()})
     else:
         mt = mt.drop('both_sexes_pheno', 'females_pheno', 'males_pheno')
         coding = hl.int(args.coding) if args.data_type == 'categorical' else hl.str(args.coding)
         mt = mt.filter_cols((mt.pheno == hl.int(args.pheno)) & (mt.coding == coding))
-        if args.data_type == 'categorical':
-            mt = mt.annotate_entries(**{field: hl.int(value) for field, value in mt.entry.items()})
+    if args.data_type != 'continuous':
+        mt = mt.annotate_entries(**{field: hl.int(value) for field, value in mt.entry.items()})
     ht = mt.key_cols_by().entries()
     ht = ht.annotate(**cov_ht[ht.key])
     ht.export(args.output_file)
