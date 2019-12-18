@@ -264,10 +264,6 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory,
         # **{f'date_{code}': ht[code].filter(lambda x: hl.is_defined(x)) for code in date_locations}
     )
     # ht = ht.annotate(primary_codes_with_date=hl.dict(hl.zip(ht.primary_codes, ht.date_primary_codes)))
-    # all_codes = hl.sorted(hl.array(ht.aggregate(
-    #     hl.agg.explode(lambda c: hl.agg.collect_as_set(c),
-    #                    hl.flatmap(lambda x: x, [ht[code] for code in code_locations])),
-    #     _localize=False)))
     all_codes = hl.sorted(hl.array(hl.set(hl.flatmap(lambda x: hl.array(x), ht.aggregate(
         [hl.agg.explode(lambda c: hl.agg.collect_as_set(c), ht[code]) for code in code_locations],
         _localize=True)))))
