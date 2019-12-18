@@ -2,7 +2,7 @@
 
 __author__ = 'konradk'
 
-from ukb_phenotypes import *
+from ukb_common import *
 
 
 def main(args):

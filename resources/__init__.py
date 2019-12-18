@@ -1,1 +1,1 @@
-from ukb_phenotypes.resources.generic import *
+from ukb_common.resources.generic import *
