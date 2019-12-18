@@ -249,7 +249,7 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory,
     date_locations = {
         'primary_codes': '41262'
     }
-    ht = hl.import_table(pre_phesant_data_path, impute=not icd9, min_partitions=100, missing='', key='userId')
+    ht = hl.import_table(pre_phesant_data_path, impute=not icd9, min_partitions=100, missing='', key='userId', types={'userId': hl.tint32})
     ht = ht.checkpoint(f'{temp_directory}/pre_phesant.ht', _read_if_exists=not force_overwrite_intermediate)
     all_phenos = list(ht.row_value)
     fields_to_select = {code: [ht[x] for x in all_phenos if x.startswith(f'x{loc}')] for code, loc in code_locations.items()}
@@ -285,7 +285,7 @@ def load_icd_data(pre_phesant_data_path, icd_codings_path, temp_directory,
     trunc_mt = trunc_mt.annotate_cols(**mt.cols().drop('truncated', 'code_locations')[trunc_mt.icd_code],
                                       truncated=True).drop('n_phenos_truncated')
     mt = mt.union_cols(trunc_mt)
-    coding_ht = hl.import_table(icd_codings_path, impute=True, key='coding')
+    coding_ht = hl.read_table(icd_codings_path)
     return mt.annotate_cols(**coding_ht[mt.col_key])
 
 
