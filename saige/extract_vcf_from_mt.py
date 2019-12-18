@@ -90,7 +90,7 @@ if __name__ == '__main__':
     parser.add_argument('--callrate_filter', help='Impose 95% callrate filter', action='store_true')
     parser.add_argument('--reference', help='Reference genome to use', default='GRCh38', choices=('GRCh37', 'GRCh38'))
 
-    parser.add_argument('--group_output_file', help='Output file for variant groupings', required=True)
+    parser.add_argument('--group_output_file', help='Output file for variant groupings')
     parser.add_argument('--output_file', help='Output file', required=True)
     parser.add_argument('--n_threads', help='Number of threads', type=int, default=8)
     args = parser.parse_args()
@@ -102,8 +102,8 @@ if __name__ == '__main__':
         if args.interval is None:
             sys.exit('Error: If --gene_map_ht_path is not specified, --interval must be specified')
     else:
-        if args.groups is None:
-            sys.exit('Error: If --gene_map_ht_path is specified, --groups must be specified')
+        if args.groups is None or args.group_output_file is None:
+            sys.exit('Error: If --gene_map_ht_path is specified, --groups and --group_output_file must be specified')
 
     main(args)
 
