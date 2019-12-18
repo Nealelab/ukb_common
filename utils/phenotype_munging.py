@@ -1,5 +1,31 @@
 import hail as hl
 
+
+def compute_n_cases(mt, data_type):
+    if data_type == 'icd':
+        extra_fields = dict(
+            n_cases=hl.agg.count_where(mt.primary_codes),
+            n_controls=hl.agg.count_where(~mt.primary_codes),
+            n_cases_secondary=hl.agg.count_where(mt.secondary_codes),
+            n_cases_cause_of_death=hl.agg.count_where(mt.cause_of_death_codes),
+            n_cases_all=hl.agg.count_where(mt.primary_codes | mt.secondary_codes | mt.external_codes | mt.cause_of_death_codes),
+            n_controls_all=hl.agg.count_where(~(mt.primary_codes | mt.secondary_codes | mt.external_codes | mt.cause_of_death_codes)))
+    else:
+        extra_fields = {'Field': hl.coalesce(mt.both_sexes_pheno.Field, mt.females_pheno.Field, mt.males_pheno.Field)}
+        if data_type == 'categorical':
+            extra_fields.update({'n_cases': hl.agg.count_where(mt.both_sexes),
+                                 'n_controls': hl.agg.count_where(~mt.both_sexes),
+                                 'meaning': hl.coalesce(mt.both_sexes_pheno.meaning,
+                                                        mt.females_pheno.meaning, mt.males_pheno.meaning)
+                                 })
+        else:
+            extra_fields.update({'n_defined': hl.agg.count_where(hl.is_defined(mt.both_sexes)),
+                                 'n_defined_females': hl.agg.count_where(hl.is_defined(mt.females)),
+                                 'n_defined_males': hl.agg.count_where(hl.is_defined(mt.males)),
+                                 })
+    return extra_fields
+
+
 def combine_phenotypes(mt: hl.MatrixTable, column_field, entry_field, lists_of_columns,
                        new_col_name='grouping', new_entry_name='new_entry', grouping_function=hl.agg.any):
     """
