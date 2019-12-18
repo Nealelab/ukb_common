@@ -86,12 +86,12 @@ def get_filtered_mt(mt_path, meta_ht_path, sample_mapping_file, qual_ht_path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--gene_map_ht_path', help='Path to gene map HT')
     parser.add_argument('--mt_path', help='Path to full MT', required=True)
     parser.add_argument('--sample_mapping_file', help='Path to sample mapping file', required=True)
     parser.add_argument('--meta_ht_path', help='Path to sample meta HT', required=True)
     parser.add_argument('--qual_ht_path', help='Path to variant filters HT')
 
+    parser.add_argument('--gene_map_ht_path', help='Path to gene map HT')
     parser.add_argument('--groups', help='Which variant groupings to use')
     parser.add_argument('--gene', help='Gene to export')
     parser.add_argument('--interval', help='Interval to export')
