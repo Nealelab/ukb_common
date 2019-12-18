@@ -13,7 +13,8 @@ def main(args):
 
     cases, controls = get_cases_and_controls_from_log(f'{args.input_dir}/result_{args.pheno}')
 
-    load_gene_data(args.input_dir, args.pheno, args.coding, args.gene_map_ht_raw_path, cases, controls, args.overwrite)
+    if not args.gene_map_ht_raw_path:
+        load_gene_data(args.input_dir, args.pheno, args.coding, args.gene_map_ht_raw_path, cases, controls, args.overwrite)
     load_variant_data(args.input_dir, args.pheno, args.coding, args.ukb_vep_ht_path, cases, controls, args.overwrite)
 
 
@@ -23,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('--input_dir', help='Input directory', required=True)
     parser.add_argument('--pheno', help='Phenotype ID', required=True)
     parser.add_argument('--coding', help='Phenotype coding', default='')
-    parser.add_argument('--gene_map_ht_raw_path', help='Path to raw gene map', required=True)
+    parser.add_argument('--gene_map_ht_raw_path', help='Path to raw gene map')
     parser.add_argument('--ukb_vep_ht_path', help='Path to UKB VEP data', required=True)
     parser.add_argument('--n_threads', help='Number of threads to run', type=int, default=8)
     parser.add_argument('--overwrite', help='Overwrite everything', action='store_true')
