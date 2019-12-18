@@ -56,7 +56,7 @@ def main(args):
     mt = mt.annotate_rows(rsid=mt.locus.contig + ':' + hl.str(mt.locus.position) + '_' + mt.alleles[0] + '/' + mt.alleles[1])
 
     if args.callrate_filter:
-        mt = mt.filter_rows(hl.agg.fraction(hl.is_defined(mt.GT)) > 0.95)
+        mt = mt.filter_rows(hl.agg.fraction(hl.is_defined(mt.GT)) >= args.callrate_filter)
 
     if args.export_bgen:
         mt = gt_to_gp(mt)
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('--mean_impute_missing', help='Whether to mean impute missing genotypes (BGEN only) '
                                                       '(default: set to hom ref)', action='store_true')
     parser.add_argument('--export_bgen', help='Export BGEN instead of VCF', action='store_true')
-    parser.add_argument('--callrate_filter', help='Impose 95% callrate filter', action='store_true')
+    parser.add_argument('--callrate_filter', help='Impose filter of specified callrate (default: none)', default=0.0, type=float)
     parser.add_argument('--reference', help='Reference genome to use', default='GRCh38', choices=('GRCh37', 'GRCh38'))
 
     parser.add_argument('--group_output_file', help='Output file for variant groupings')
