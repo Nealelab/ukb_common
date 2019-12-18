@@ -3,6 +3,8 @@ import argparse
 import os
 import sys
 import tempfile
+import warnings
+import importlib
 
 
 def gt_to_gp(mt, location: str = 'gp'):
@@ -30,8 +32,15 @@ def main(args):
     meta_ht = hl.read_table(args.meta_ht_path)
     meta_ht = meta_ht.filter(~meta_ht.is_filtered & (meta_ht.hybrid_pop == '12'))
     sample_mapping_ht = hl.import_table(args.sample_mapping_file, key='eid_sample', delimiter=',')
-    qual_ht = hl.read_table(args.qual_ht_path)
-    qual_ht = qual_ht.filter(hl.len(qual_ht.filters) == 0)
+    mt = mt.annotate_cols(exome_id=sample_mapping_ht[mt.s.split('_')[1]].eid_26041, meta=meta_ht[mt.col_key]).key_cols_by('exome_id')
+    mt = mt.filter_cols(hl.is_defined(mt.meta) & hl.is_defined(mt.exome_id))
+
+    if args.qual_ht_path is None:
+        warnings.warn('--qual_ht_path is not specified. Variants will be unfiltered.')
+    else:
+        qual_ht = hl.read_table(args.qual_ht_path)
+        qual_ht = qual_ht.filter(hl.len(qual_ht.filters) == 0)
+        mt = mt.filter_rows(hl.is_defined(qual_ht[mt.row_key]))
 
     if args.gene_map_ht_path is None:
         interval = [hl.parse_locus_interval(args.interval)]
@@ -53,9 +62,7 @@ def main(args):
         mt = mt.filter_entries(mt.adj)
 
     mt = hl.filter_intervals(mt, interval).select_entries('GT')
-    mt = mt.annotate_cols(exome_id=sample_mapping_ht[mt.s.split('_')[1]].eid_26041, meta=meta_ht[mt.col_key]).key_cols_by('exome_id')
-    mt = mt.filter_cols(hl.is_defined(mt.meta) & hl.is_defined(mt.exome_id))
-    mt = mt.filter_rows(hl.is_defined(qual_ht[mt.row_key]) & (hl.agg.count_where(mt.GT.is_non_ref()) > 0))
+    mt = mt.filter_rows(hl.agg.count_where(mt.GT.is_non_ref()) > 0)
     mt = mt.annotate_rows(rsid=mt.locus.contig + ':' + hl.str(mt.locus.position) + '_' + mt.alleles[0] + '/' + mt.alleles[1])
 
     if args.callrate_filter:
@@ -77,7 +84,7 @@ if __name__ == '__main__':
     parser.add_argument('--mt_path', help='Path to full MT', required=True)
     parser.add_argument('--sample_mapping_file', help='Path to sample mapping file', required=True)
     parser.add_argument('--meta_ht_path', help='Path to sample meta HT', required=True)
-    parser.add_argument('--qual_ht_path', help='Path to variant filters HT', required=True)
+    parser.add_argument('--qual_ht_path', help='Path to variant filters HT')
 
     parser.add_argument('--groups', help='Which variant groupings to use')
     parser.add_argument('--gene', help='Gene to export')
