@@ -315,15 +315,6 @@ def get_full_icd_data_description(icd_codings_path, temp_path='hdfs://codings'):
     return icd_ht.transmute(node_id=icd_ht.original_node_id, parent_id=icd_ht.original_parent_id)
 
 
-def read_covariate_data(pre_phesant_data_path):
-    ht = hl.import_table(pre_phesant_data_path, impute=True, min_partitions=100, missing='', key='userId')
-    columns = {
-        'sex': 'x22001_0_0',
-        'age': 'x21022_0_0'
-    }
-    columns.update(**{f'pc{i}': f'x22009_0_{i}' for i in range(1, 41)})
-    return ht.select(*columns.values()).rename({v: k for k, v in columns.items()}).annotate_globals(coding_source=columns)
-
 
 def make_cooccurrence_mt(mt: hl.MatrixTable):
     mt = hl.read_matrix_table(get_ukb_pheno_mt_path('icd'))

@@ -8,8 +8,7 @@ def main(args):
     hl.init(master=f'local[{args.n_threads}]',
             log=hl.utils.timestamp_path(os.path.join(tempfile.gettempdir(), 'export_pheno'), suffix='.log'),
             default_reference='GRCh38')
-    cov_ht = hl.read_table(args.covariates_path).select('sex', 'age', *['pc' + str(x) for x in range(1, args.num_pcs + 1)])
-    cov_ht = cov_ht.annotate(age2=cov_ht.age ** 2, age_sex=cov_ht.age * cov_ht.sex, age2_sex=cov_ht.age ** 2 * cov_ht.sex)
+    cov_ht = hl.read_table(args.covariates_path)
     mt = hl.read_matrix_table(args.input_file)
     if args.data_type == 'icd':
         mt = mt.filter_cols(mt.icd_code == args.pheno)
