@@ -167,6 +167,7 @@ def add_coding_information(mt: hl.MatrixTable, coding_ht: hl.Table, phesant_phen
     if download_missing_codings: get_missing_codings(mt.cols())
     phesant_summary = hl.import_table(phesant_phenotype_info_path, impute=True, missing='', key='FieldID')
     phesant_reassign = get_phesant_reassignments(phesant_summary)
+    phesant_reassign = phesant_reassign.key_by('pheno', coding=hl.str(phesant_reassign.coding))
     mt = mt.annotate_cols(recoding=hl.or_missing(
         hl.is_missing(mt.meaning), phesant_reassign[mt.col_key].reassign_from
     ))
