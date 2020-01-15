@@ -340,7 +340,7 @@ def make_cooccurrence_ht(mt: hl.MatrixTable):
 
 
 def make_correlation_ht(mt: hl.MatrixTable):
-    mt = mt.filter_cols(mt.n_cases > 0).add_col_index()
+    mt = mt.filter_cols(mt.n_cases_both_sexes > 0).add_col_index()
     ht = mt.cols().key_by('col_idx')
     pheno = mt.value if 'value' in list(mt.entry) else mt.both_sexes
     bm = hl.linalg.BlockMatrix.from_entry_expr(pheno, mean_impute=True, center=True, normalize=True, axis='cols', block_size=512)
@@ -401,16 +401,40 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
             n_cases_females=hl.agg.count_where(field & (sex_field == 0)),
             n_cases_males=hl.agg.count_where(field & (sex_field == 1))
         )
-    def format_entries_binary(field, sex_field):
+    def format_entries(field, sex_field):
         return dict(
-            n_cases_both_sexes=hl.float64(field),
-            n_cases_females=hl.float64(hl.or_missing(sex_field == 0, field)),
-            n_cases_males=hl.float64(hl.or_missing(sex_field == 1, field))
+            both_sexes=hl.float64(field),
+            females=hl.float64(hl.or_missing(sex_field == 0, field)),
+            males=hl.float64(hl.or_missing(sex_field == 1, field))
         )
 
     for data_type, mt in pheno_file_dict.items():
         mt = mt.annotate_rows(**cov_ht[mt.row_key])
-        if 'pheno' in list(mt.col_key):
+        print(data_type)
+        if data_type == 'phecode':
+            mt = mt.key_cols_by(pheno=mt.phecode, coding=mt.phecode_sex)
+            mt = mt.annotate_cols(n_cases=hl.agg.count_where(mt.case_control))
+            mt = mt.select_cols(**compute_cases_binary(mt.case_control, mt.sex),
+                                data_type=data_type, meaning=mt.phecode_description,
+                                path=mt.phecode_group)
+            mt = mt.select_entries(**format_entries(mt.case_control, mt.sex))
+        elif data_type == 'prescriptions':
+            mt = mt.select_entries(value=hl.or_else(hl.len(mt.values) > 0, False))
+            mt2 = mt.group_cols_by(
+                pheno=mt.Drug_Category_and_Indication, coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication,
+            ).aggregate(value=hl.agg.any(mt.value))
+            mt = mt.key_cols_by(pheno=mt.Generic_Name, coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication).select_cols()
+            mt = mt.union_cols(mt2).key_cols_by('pheno', 'coding')
+            mt = mt.select_cols(**compute_cases_binary(mt.value, mt.sex),
+                                data_type=data_type, meaning=mt.pheno,
+                                path=mt.Drug_Category_and_Indication)
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+        elif data_type == 'biomarkers':
+            mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
+                                data_type=data_type, meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
+        elif 'pheno' in list(mt.col_key):
             mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
 
             def check_func(x):
@@ -429,25 +453,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
                                 data_type=data_type,
                                 meaning=mt.short_meaning,
                                 path=mt.meaning)
-            mt = mt.select_entries(**format_entries_binary(mt.any_codes, mt.sex))
-        elif 'phecode' in list(mt.col_key):
-            mt = mt.key_cols_by(pheno=mt.phecode, coding=mt.phecode_sex)
-            mt = mt.annotate_cols(n_cases=hl.agg.count_where(mt.case_control))
-            mt = mt.select_cols(**compute_cases_binary(mt.case_control, mt.sex),
-                                data_type=data_type, meaning=mt.phecode_description,
-                                path=mt.phecode_group)
-            mt = mt.select_entries(**format_entries_binary(mt.case_control, mt.sex))
-        elif 'Generic_Name' in list(mt.col_key):
-            mt = mt.select_entries(value=hl.or_else(hl.len(mt.values) > 0, False))
-            mt2 = mt.group_cols_by(
-                pheno=mt.Drug_Category_and_Indication, coding=''
-            ).aggregate(value=hl.agg.any(mt.value))
-            mt = mt.key_cols_by(pheno=mt.Generic_Name, coding='').select_cols()
-            mt = mt.union_cols(mt2)
-            mt = mt.select_cols(**compute_cases_binary(mt.value, mt.sex),
-                                data_type=data_type, meaning=mt.pheno,
-                                path=mt.Drug_Category_and_Indication)
-            mt = mt.select_entries(**format_entries_binary(mt.value, mt.sex))
+            mt = mt.select_entries(**format_entries(mt.any_codes, mt.sex))
         else:
             raise ValueError('pheno or icd_code not in column key. New data type?')
 
@@ -456,7 +462,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
         else:
             full_mt = full_mt.union_cols(mt, row_join_type='outer' if data_type == 'prescriptions' else 'inner')
     full_mt = full_mt.unfilter_entries()
-    return full_mt.select_entries(value=hl.cond(
+    return full_mt.select_entries(**{sex: hl.cond(
         full_mt.data_type == 'prescriptions',
-        hl.or_else(full_mt.value, hl.float64(0.0)),
-        full_mt.value))
+        hl.or_else(full_mt[sex], hl.float64(0.0)),
+        full_mt[sex]) for sex in sexes})

@@ -1,4 +1,4 @@
-import hail as hl
+from gnomad_hail import *
 
 
 def load_all_mfi_data():
@@ -17,3 +17,29 @@ def load_all_mfi_data():
                        alleles=[ht.ref, ht.alt])
         hts.append(ht.annotate(original_chromosome=chromosome))
     return hts[0].union(*hts[1:])
+
+
+def mac_category_case_builder(call_stats_expr):
+    return (hl.case()
+            .when(call_stats_expr.AC[1] <= 5, call_stats_expr.AC[1])
+            .when(call_stats_expr.AC[1] <= 10, 10)
+            .when(call_stats_expr.AC[1] <= 20, 20)
+            .when(call_stats_expr.AF[1] <= 0.001, 0.001)
+            .when(call_stats_expr.AF[1] <= 0.01, 0.01)
+            .when(call_stats_expr.AF[1] <= 0.1, 0.1)
+            .default(0.99))
+
+
+def prepare_mt_for_plink(mt: hl.MatrixTable, n_samples: int, min_call_rate: float = 0.95,
+                         variants_per_mac_category: int = 2000,
+                         variants_per_maf_category: int = 10000):
+    mt = filter_to_autosomes(mt)
+    mt = mt.filter_rows((mt.call_stats.AN >= n_samples * 2 * min_call_rate) &
+                        (mt.call_stats.AC[1] > 0))
+    mt = mt.annotate_rows(mac_category=mac_category_case_builder(mt.call_stats))
+    category_counter = mt.aggregate_rows(hl.agg.counter(mt.mac_category))
+    print(category_counter)
+    mt = mt.annotate_globals(category_counter=category_counter)
+    return mt.filter_rows(hl.rand_unif(0, 1) <
+                          hl.cond(mt.mac_category >= 1, variants_per_mac_category, variants_per_maf_category) / mt.category_counter[mt.mac_category]
+                          )
