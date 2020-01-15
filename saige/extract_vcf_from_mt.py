@@ -29,6 +29,7 @@ def main(args):
             log=hl.utils.timestamp_path(os.path.join(tempfile.gettempdir(), 'extract_vcf'), suffix='.log'),
             default_reference=args.reference)
 
+    sys.path.append('/')
     load_module = importlib.import_module(args.load_module)
     mt = getattr(load_module, args.load_mt_function)()
 

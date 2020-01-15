@@ -316,9 +316,18 @@ def get_full_icd_data_description(icd_codings_path, temp_path='hdfs://codings'):
     return icd_ht.transmute(node_id=icd_ht.original_node_id, parent_id=icd_ht.original_parent_id)
 
 
+def load_prescription_data(prescription_data_tsv_path: str, prescription_mapping_tsv_path):
+    ht = hl.import_table(prescription_data_tsv_path, types={'eid': hl.tint, 'data_provider': hl.tint}, key='eid')
+    mapping_ht = hl.import_table(prescription_mapping_tsv_path, impute=True, key='Original_Prescription')
+    ht = ht.annotate(issue_date=hl.cond(hl.len(ht.issue_date) == 0, hl.null(hl.tint64),
+                                        hl.experimental.strptime(ht.issue_date + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT')),
+                     **mapping_ht[ht.drug_name])
+    ht = ht.filter(ht.Generic_Name != '').key_by('eid', 'Generic_Name', 'Drug_Category_and_Indication').collect_by_key()
+    ht = ht.annotate(values=hl.sorted(ht.values, key=lambda x: x.issue_date))
+    return ht.to_matrix_table(row_key=['eid'], col_key=['Generic_Name'], col_fields=['Drug_Category_and_Indication'])
 
-def make_cooccurrence_mt(mt: hl.MatrixTable):
-    mt = hl.read_matrix_table(get_ukb_pheno_mt_path('icd'))
+
+def make_cooccurrence_ht(mt: hl.MatrixTable):
     mt = mt.annotate_cols(n_cases=hl.agg.sum(mt.any_codes))
     mt = mt.filter_cols(mt.n_cases >= 500).add_col_index()
     ht = mt.key_cols_by('col_idx').cols()
@@ -329,3 +338,125 @@ def make_cooccurrence_mt(mt: hl.MatrixTable):
     pheno_ht = pheno_ht.annotate(prop_overlap=pheno_ht.entry / pheno_ht.i_data.n_cases)
     # pheno_ht = pheno_ht.checkpoint(f'{pheno_folder}/pheno_combo_explore/pheno_overlap.ht')
 
+
+def make_correlation_ht(mt: hl.MatrixTable):
+    mt = mt.filter_cols(mt.n_cases > 0).add_col_index()
+    ht = mt.cols().key_by('col_idx')
+    pheno = mt.value if 'value' in list(mt.entry) else mt.both_sexes
+    bm = hl.linalg.BlockMatrix.from_entry_expr(pheno, mean_impute=True, center=True, normalize=True, axis='cols', block_size=512)
+    bm = bm.T @ bm
+    pheno_ht = bm.entries()
+    pheno_ht = pheno_ht.annotate(i_data=ht[pheno_ht.i], j_data=ht[pheno_ht.j])
+    return pheno_ht
+
+
+def combine_pheno_files(pheno_file_dict: dict):
+    full_mt: hl.MatrixTable = None
+    for data_type, mt in pheno_file_dict.items():
+        if 'pheno' in list(mt.col_key):
+            mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
+            criteria = mt.value if data_type == 'categorical' else hl.is_defined(mt.value)
+            mt = mt.annotate_cols(n_cases=hl.agg.count_where(criteria))
+            mt = mt.select_entries(value=hl.float64(mt.value))
+        elif 'icd_code' in list(mt.col_key):
+            mt = mt.key_cols_by(pheno=mt.icd_code, coding=mt.icd_version)
+            mt = mt.filter_cols(mt.truncated)
+            mt = mt.annotate_cols(n_cases=hl.agg.count_where(mt.any_codes))
+            mt = mt.select_entries(value=hl.float64(mt.any_codes))
+        elif 'phecode' in list(mt.col_key):
+            mt = mt.key_cols_by(pheno=mt.phecode, coding=mt.phecode_sex)
+            mt = mt.annotate_cols(n_cases=hl.agg.count_where(mt.case_control))
+            mt = mt.select_entries(value=hl.float64(mt.case_control))
+        elif 'Generic_Name' in list(mt.col_key):
+            mt = mt.select_entries(value=hl.float64(hl.or_else(hl.len(mt.values) > 0, False)))
+            mt2 = mt.group_cols_by(
+                pheno=mt.Drug_Category_and_Indication,
+                coding=mt.Drug_Category_and_Indication
+            ).aggregate(value=hl.float64(hl.agg.any(mt.value > 0)))
+            mt = mt.key_cols_by(pheno=mt.Generic_Name, coding=mt.Drug_Category_and_Indication).select_cols()
+            mt = mt.union_cols(mt2)
+            mt = mt.annotate_cols(n_cases=hl.int64(hl.agg.sum(mt.value)))
+        else:
+            raise ValueError('pheno or icd_code not in column key. New data type?')
+        mt = mt.select_cols('n_cases', data_type=data_type,
+                            n_defined=hl.agg.count_where(hl.is_defined(mt.value)))
+        if full_mt is None:
+            full_mt = mt
+        else:
+            full_mt = full_mt.union_cols(mt, row_join_type='outer' if data_type == 'prescriptions' else 'inner')
+    full_mt = full_mt.unfilter_entries()
+    return full_mt.select_entries(value=hl.cond(
+        full_mt.data_type == 'prescriptions',
+        hl.or_else(full_mt.value, hl.float64(0.0)),
+        full_mt.value))
+
+
+def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
+    full_mt: hl.MatrixTable = None
+    sexes = ('both_sexes', 'females', 'males')
+
+    def compute_cases_binary(field, sex_field):
+        return dict(
+            n_cases_both_sexes=hl.agg.count_where(field),
+            n_cases_females=hl.agg.count_where(field & (sex_field == 0)),
+            n_cases_males=hl.agg.count_where(field & (sex_field == 1))
+        )
+    def format_entries_binary(field, sex_field):
+        return dict(
+            n_cases_both_sexes=hl.float64(field),
+            n_cases_females=hl.float64(hl.or_missing(sex_field == 0, field)),
+            n_cases_males=hl.float64(hl.or_missing(sex_field == 1, field))
+        )
+
+    for data_type, mt in pheno_file_dict.items():
+        mt = mt.annotate_rows(**cov_ht[mt.row_key])
+        if 'pheno' in list(mt.col_key):
+            mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
+
+            def check_func(x):
+                return x if data_type == 'categorical' else hl.is_defined(x)
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(check_func(mt[sex])) for sex in sexes},
+                                data_type=data_type,
+                                meaning=hl.coalesce(*[mt[f'{sex}_pheno'].Field for sex in sexes]),
+                                path=hl.coalesce(*[mt[f'{sex}_pheno'].Path for sex in sexes]))
+            mt = mt.select_entries(**{sex: hl.float64(mt[sex]) for sex in sexes})
+
+        elif 'icd_code' in list(mt.col_key):
+            icd_version = mt.icd_version if 'icd_version' in list(mt.col) else ''
+            mt = mt.key_cols_by(pheno=mt.icd_code, coding=icd_version)
+            mt = mt.filter_cols(mt.truncated)
+            mt = mt.select_cols(**compute_cases_binary(mt.any_codes, mt.sex),
+                                data_type=data_type,
+                                meaning=mt.short_meaning,
+                                path=mt.meaning)
+            mt = mt.select_entries(**format_entries_binary(mt.any_codes, mt.sex))
+        elif 'phecode' in list(mt.col_key):
+            mt = mt.key_cols_by(pheno=mt.phecode, coding=mt.phecode_sex)
+            mt = mt.annotate_cols(n_cases=hl.agg.count_where(mt.case_control))
+            mt = mt.select_cols(**compute_cases_binary(mt.case_control, mt.sex),
+                                data_type=data_type, meaning=mt.phecode_description,
+                                path=mt.phecode_group)
+            mt = mt.select_entries(**format_entries_binary(mt.case_control, mt.sex))
+        elif 'Generic_Name' in list(mt.col_key):
+            mt = mt.select_entries(value=hl.or_else(hl.len(mt.values) > 0, False))
+            mt2 = mt.group_cols_by(
+                pheno=mt.Drug_Category_and_Indication, coding=''
+            ).aggregate(value=hl.agg.any(mt.value))
+            mt = mt.key_cols_by(pheno=mt.Generic_Name, coding='').select_cols()
+            mt = mt.union_cols(mt2)
+            mt = mt.select_cols(**compute_cases_binary(mt.value, mt.sex),
+                                data_type=data_type, meaning=mt.pheno,
+                                path=mt.Drug_Category_and_Indication)
+            mt = mt.select_entries(**format_entries_binary(mt.value, mt.sex))
+        else:
+            raise ValueError('pheno or icd_code not in column key. New data type?')
+
+        if full_mt is None:
+            full_mt = mt
+        else:
+            full_mt = full_mt.union_cols(mt, row_join_type='outer' if data_type == 'prescriptions' else 'inner')
+    full_mt = full_mt.unfilter_entries()
+    return full_mt.select_entries(value=hl.cond(
+        full_mt.data_type == 'prescriptions',
+        hl.or_else(full_mt.value, hl.float64(0.0)),
+        full_mt.value))

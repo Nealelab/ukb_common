@@ -1,4 +1,15 @@
+from hailtop import pipeline
 from hailtop.pipeline.pipeline import *
+from collections import Counter
+
+SCRIPT_DIR = '/ukb_common/saige'
+saige_pheno_types = {
+    'continuous': 'quantitative',
+    'biomarkers': 'quantitative',
+    'categorical': 'binary',
+    'icd': 'binary',
+    'phecode': 'binary'
+}
 
 
 def create_sparse_grm(p: Pipeline, output_path: str, plink_file_root: str, docker_image: str,
