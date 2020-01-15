@@ -39,7 +39,7 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
                         gene: str = None, interval: str = None, groups=None,
                         set_missing_to_hom_ref: bool = False, callrate_filter: float = 0.0, adj: bool = True,
                         export_bgen: bool = True,
-                        n_threads: int = 2, storage: str = '500Mi', memory: str = ''):
+                        n_threads: int = 2, storage: str = '500Mi', additional_args: str = '', memory: str = ''):
     if groups is None:
         # groups = {'pLoF', 'missense|LC', 'pLoF|missense|LC', 'synonymous'}
         groups = {'pLoF', 'missense|LC', 'synonymous'}
@@ -59,6 +59,7 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     output_file = f'{extract_task.bgz}.bgz' if not export_bgen else extract_task.out
     command = f"""python3 {SCRIPT_DIR}/extract_vcf_from_mt.py
     --load_module {module}
+    {"--additional_args " + additional_args if additional_args else ''}
     {"--gene " + gene if gene else ""}
     {"--interval " + interval if interval else ""}
     --groups "{','.join(groups)}"

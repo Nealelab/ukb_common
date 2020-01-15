@@ -30,8 +30,11 @@ def main(args):
             default_reference=args.reference)
 
     sys.path.append('/')
+    add_args = []
+    if args.additional_args is not None:
+        add_args = args.additional_args.split(',')
     load_module = importlib.import_module(args.load_module)
-    mt = getattr(load_module, args.load_mt_function)()
+    mt = getattr(load_module, args.load_mt_function)(*add_args)
 
     if args.gene_map_ht_path is None:
         interval = [hl.parse_locus_interval(args.interval)]
@@ -74,6 +77,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--load_module', help='Module to load with helper functions', required=True)
     parser.add_argument('--load_mt_function', help='Function in module to load analysis-ready MatrixTable', default='get_filtered_mt')
+    parser.add_argument('--additional_args', help='Comma separated list of arguments to pass to mt_function')
 
     parser.add_argument('--gene_map_ht_path', help='Path to gene map HT')
     parser.add_argument('--groups', help='Which variant groupings to use')
