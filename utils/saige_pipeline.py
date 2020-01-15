@@ -56,12 +56,12 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
         extract_task.declare_resource_group(out={'vcf.gz': f'{{root}}.vcf.gz',
                                                  'vcf.gz.tbi': f'{{root}}.vcf.gz.tbi'})
 
-    output_file = f'{extract_task.bgz}.bgz' if export_bgen else extract_task.out
+    output_file = f'{extract_task.bgz}.bgz' if not export_bgen else extract_task.out
     command = f"""python3 {SCRIPT_DIR}/extract_vcf_from_mt.py
     --load_module {module}
     {"--gene " + gene if gene else ""}
     {"--interval " + interval if interval else ""}
-    --groups {','.join(groups)}
+    --groups "{','.join(groups)}"
     {"--callrate_filter " + str(callrate_filter) if callrate_filter else ""} 
     {"--export_bgen" if export_bgen else ""} 
     {"" if set_missing_to_hom_ref else "--mean_impute_missing"}
@@ -82,7 +82,7 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     return extract_task
 
 
-def export_pheno(p: Pipeline, output_path: str, pheno: str, input_mt_path: str, covariates_path: str, docker_image: str,
+def export_pheno(p: Pipeline, output_path: str, pheno: str, input_mt_path: str, docker_image: str,
                  data_type: str = 'icd', n_threads: int = 8, storage: str = '500Mi'):
     extract_task: pipeline.pipeline.Task = p.new_task(name='extract_pheno',
                                                       attributes={
@@ -94,9 +94,8 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, input_mt_path: str, 
         pheno, coding = pheno.split('-')
     python_command = f"""python3 {SCRIPT_DIR}/export_pheno.py
     --input_file {input_mt_path} 
-    --covariates_path {covariates_path}
-    --data_type {data_type}
-    --pheno {pheno}
+    {"--binary_pheno" if data_type != "continuous" else ""}
+    --pheno {pheno} --sex both_sexes
     {"--coding " + coding if coding else ''}
     --output_file {extract_task.out}
     --n_threads {n_threads} | tee {extract_task.stdout}
@@ -115,8 +114,8 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
                   sparse_grm_extension: str = None, skip_model_fitting: bool = False,
                   n_threads: int = 8, storage: str = '1500Mi'):
     analysis_type = "variant" if sparse_grm is None else "gene"
-    pheno_col = 'any_codes' if trait_type == 'icd' else 'both_sexes'
-    user_id_col = 'userId' if trait_type == 'icd' else 'userID'  # TODO: fix on next load
+    pheno_col = 'value'
+    user_id_col = 'userId'
     in_bfile = p.read_input_group(**{ext: f'{plink_file_root}.{ext}' for ext in ('bed', 'bim', 'fam')})
     fit_null_task = p.new_task(name=f'fit_null_model',
                                attributes={
