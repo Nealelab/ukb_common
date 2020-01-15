@@ -31,7 +31,6 @@ if __name__ == '__main__':
     parser.add_argument('--load_mt_function', help='Function in module to load analysis-ready MatrixTable', default='get_ukb_pheno_mt')
     parser.add_argument('--additional_args', help='Comma separated list of arguments to pass to mt_function')
 
-    parser.add_argument('--input_file', help='Input phenotype file', required=True)
     parser.add_argument('--binary_pheno', help='Whether to convert phenotype value to integer', action='store_true')
     parser.add_argument('--sex', help='Sex to use for pheno value', choices=('both_sexes', 'females', 'males'))
     parser.add_argument('--pheno', help='Pheno to output', required=True)
