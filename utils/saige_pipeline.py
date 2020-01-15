@@ -82,20 +82,18 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     return extract_task
 
 
-def export_pheno(p: Pipeline, output_path: str, pheno: str, input_mt_path: str, docker_image: str,
-                 data_type: str = 'icd', n_threads: int = 8, storage: str = '500Mi'):
+def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, module: str, docker_image: str,
+                 data_type: str = 'icd', n_threads: int = 8, storage: str = '500Mi', additional_args: str = ''):
     extract_task: pipeline.pipeline.Task = p.new_task(name='extract_pheno',
                                                       attributes={
                                                           'pheno': pheno
                                                       })
     extract_task.image(docker_image).cpu(n_threads).storage(storage)
-    coding = None
-    if '-' in pheno:
-        pheno, coding = pheno.split('-')
     python_command = f"""python3 {SCRIPT_DIR}/export_pheno.py
-    --input_file {input_mt_path} 
+    --load_module {module}
     {"--binary_pheno" if data_type != "continuous" else ""}
     --pheno {pheno} --sex both_sexes
+    {"--additional_args " + additional_args if additional_args else ''}
     {"--coding " + coding if coding else ''}
     --output_file {extract_task.out}
     --n_threads {n_threads} | tee {extract_task.stdout}
