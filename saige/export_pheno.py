@@ -2,6 +2,9 @@ import hail as hl
 import argparse
 import os
 import tempfile
+import sys
+import importlib
+
 
 
 def main(args):

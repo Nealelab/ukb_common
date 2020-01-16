@@ -14,3 +14,9 @@ icd_codings_tsv_path = get_coding_path(19)
 icd9_codings_tsv_path = get_coding_path(87)
 icd_codings_ht_path = get_coding_path(19, 'ht')
 icd9_codings_ht_path = get_coding_path(87, 'ht')
+
+
+PILOT_PHENOTYPES = set(map(lambda x: (x, '', 'continuous'), {'50', '699', '23104'})).union(
+    set(map(lambda x: (*x, 'categorical'), {('20004', '1095'), ('20004', '1479')}))).union(
+    set(map(lambda x: (x, '', 'icd'), {'K519', 'K509', 'E109', 'E119', 'J459', 'I251',
+                                       'K51', 'K50', 'E10', 'E11', 'J45', 'I25'})))

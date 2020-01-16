@@ -36,7 +36,7 @@ def create_sparse_grm(p: Pipeline, output_path: str, plink_file_root: str, docke
 
 
 def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module: str = 'ukb_exomes',
-                        gene: str = None, interval: str = None, groups=None,
+                        gene: str = None, interval: str = None, groups=None, gene_map_ht_path: str = None,
                         set_missing_to_hom_ref: bool = False, callrate_filter: float = 0.0, adj: bool = True,
                         export_bgen: bool = True,
                         n_threads: int = 2, storage: str = '500Mi', additional_args: str = '', memory: str = ''):
@@ -63,6 +63,7 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     {"--gene " + gene if gene else ""}
     {"--interval " + interval if interval else ""}
     --groups "{','.join(groups)}"
+    {"--gene_map_ht_path " + gene_map_ht_path if gene_map_ht_path else ""} 
     {"--callrate_filter " + str(callrate_filter) if callrate_filter else ""} 
     {"--export_bgen" if export_bgen else ""} 
     {"" if set_missing_to_hom_ref else "--mean_impute_missing"}
@@ -84,15 +85,16 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
 
 
 def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, module: str, docker_image: str,
-                 data_type: str = 'icd', n_threads: int = 8, storage: str = '500Mi', additional_args: str = ''):
+                 trait_type: str = 'icd', n_threads: int = 8, storage: str = '500Mi', additional_args: str = ''):
     extract_task: pipeline.pipeline.Task = p.new_task(name='extract_pheno',
                                                       attributes={
-                                                          'pheno': pheno
+                                                          'pheno': pheno,
+                                                          'trait_type': trait_type
                                                       })
     extract_task.image(docker_image).cpu(n_threads).storage(storage)
     python_command = f"""python3 {SCRIPT_DIR}/export_pheno.py
     --load_module {module}
-    {"--binary_pheno" if data_type != "continuous" else ""}
+    {"--binary_pheno" if trait_type != "continuous" else ""}
     --pheno {pheno} --sex both_sexes
     {"--additional_args " + additional_args if additional_args else ''}
     {"--coding " + coding if coding else ''}
@@ -104,7 +106,7 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, module:
 
     p.write_output(extract_task.out, output_path)
     p.write_output(extract_task.stdout, f'{output_path}.log')
-    return extract_task.out
+    return extract_task
 
 
 def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.Resource, pheno_name: str,
@@ -119,7 +121,8 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
     fit_null_task = p.new_task(name=f'fit_null_model',
                                attributes={
                                    'analysis_type': analysis_type,
-                                   'pheno': pheno_name
+                                   'pheno': pheno_name,
+                                   'trait_type': trait_type
                                }).cpu(n_threads).storage(storage).image(docker_image)
     output_files = {ext: f'{{root}}{ext if ext.startswith("_") else "." + ext}' for ext in
                    ('rda', '_30markers.SAIGE.results.txt', f'{analysis_type}.varianceRatio.txt')}
@@ -169,9 +172,7 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
     analysis_type = "gene" if sparse_sigma_file is not None else "variant"
     run_saige_task: pipeline.pipeline.Task = p.new_task(name=f'run_saige',
                                                         attributes={
-                                                            'analysis_type': analysis_type,
-                                                            'output_path': output_root,
-                                                            'chromosome': chrom
+                                                            'analysis_type': analysis_type
                                                         }).cpu(1).storage(storage).image(docker_image)  # Step 2 is single-threaded only
 
     if analysis_type == 'gene':
@@ -217,12 +218,13 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
     return run_saige_task
 
 
-def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, tasks_to_hold, docker_image: str,
+def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, tasks_to_hold,
+                           vep_path: str, docker_image: str, gene_map_path: str = None,
                            n_threads: int = 8, storage: str = '500Mi'):
 
     load_data_task: pipeline.pipeline.Task = p.new_task(name=f'load_data',
                                                         attributes={
-                                                            'output_path': output_root
+                                                            'pheno': pheno
                                                         }).image(docker_image).cpu(n_threads).storage(storage)
     load_data_task.depends_on(*tasks_to_hold)
     coding = None
@@ -232,8 +234,8 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, tasks_to_h
     --input_dir {output_root}
     --pheno {pheno}
     {"--coding " + coding if coding else ''}
-    --gene_map_ht_raw_path gs://ukbb-pharma-exome-analysis/mt/ukb.exomes.gene_map.raw.ht
-    --ukb_vep_ht_path gs://ukbb-pharma-exome-analysis/mt/ukb.exomes.vep.ht
+    {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
+    --ukb_vep_ht_path {vep_path}
     --overwrite
     --n_threads {n_threads} | tee {load_data_task.stdout}
     ;""".replace('\n', ' ')
