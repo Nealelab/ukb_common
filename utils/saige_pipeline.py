@@ -219,7 +219,8 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
 
 
 def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, tasks_to_hold,
-                           vep_path: str, docker_image: str, gene_map_path: str = None,
+                           vep_path: str, docker_image: str, gene_map_path: str = None, reference: str = 'GRCh38',
+                           analysis_type: str = 'gene',
                            n_threads: int = 8, storage: str = '500Mi'):
 
     load_data_task: pipeline.pipeline.Task = p.new_task(name=f'load_data',
@@ -236,7 +237,8 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, tasks_to_h
     {"--coding " + coding if coding else ''}
     {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
     --ukb_vep_ht_path {vep_path}
-    --overwrite
+    --overwrite --reference {reference}
+    --analysis_type {analysis_type}
     --n_threads {n_threads} | tee {load_data_task.stdout}
     ;""".replace('\n', ' ')
 

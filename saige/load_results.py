@@ -2,20 +2,21 @@
 
 __author__ = 'konradk'
 
-from ukb_exomes import *
+from ukb_common import *
 import tempfile
 
 
 def main(args):
     hl.init(master=f'local[{args.n_threads}]',
             log=hl.utils.timestamp_path(os.path.join(tempfile.gettempdir(), 'load_results'), suffix='.log'),
-            default_reference='GRCh38')
+            default_reference=args.reference)
 
     cases, controls = get_cases_and_controls_from_log(f'{args.input_dir}/result_{args.pheno}')
 
-    if not args.gene_map_ht_raw_path:
+    extension = 'single.txt' if args.analysis_type == 'gene' else 'single_variant.txt'
+    if args.analysis_type == 'gene':
         load_gene_data(args.input_dir, args.pheno, args.coding, args.gene_map_ht_raw_path, cases, controls, args.overwrite)
-    load_variant_data(args.input_dir, args.pheno, args.coding, args.ukb_vep_ht_path, cases, controls, args.overwrite)
+    load_variant_data(args.input_dir, args.pheno, args.coding, args.ukb_vep_ht_path, extension, cases, controls, args.overwrite)
 
 
 if __name__ == '__main__':
@@ -24,6 +25,8 @@ if __name__ == '__main__':
     parser.add_argument('--input_dir', help='Input directory', required=True)
     parser.add_argument('--pheno', help='Phenotype ID', required=True)
     parser.add_argument('--coding', help='Phenotype coding', default='')
+    parser.add_argument('--analysis_type', help='Analysis type', choices=('gene', 'variant'), default='gene')
+    parser.add_argument('--reference', help='Reference genome', default='GRCh38')
     parser.add_argument('--gene_map_ht_raw_path', help='Path to raw gene map')
     parser.add_argument('--ukb_vep_ht_path', help='Path to UKB VEP data', required=True)
     parser.add_argument('--n_threads', help='Number of threads to run', type=int, default=8)
