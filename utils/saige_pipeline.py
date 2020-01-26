@@ -3,6 +3,8 @@ from hailtop.pipeline.pipeline import *
 from collections import Counter
 from shlex import quote as shq
 
+
+MKL_OFF = 'export MKL_NUM_THREADS=1; export MKL_DYNAMIC=false; export OMP_NUM_THREADS=1; export OMP_DYNAMIC=false; '
 SCRIPT_DIR = '/ukb_common/saige'
 saige_pheno_types = {
     'continuous': 'quantitative',
@@ -186,7 +188,7 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
     else:
         run_saige_task.declare_resource_group(result={'single_variant.txt': '{root}'})
 
-    command = (f'Rscript /usr/local/bin/step2_SPAtests.R '
+    command = (f'set -o pipefail; {MKL_OFF} Rscript /usr/local/bin/step2_SPAtests.R '
                f'--minMAF={min_maf} '
                f'--minMAC={min_mac} '
                f'--maxMAFforGroupTest={max_maf} '
