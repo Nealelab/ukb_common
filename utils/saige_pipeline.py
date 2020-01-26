@@ -225,23 +225,22 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
     return run_saige_task
 
 
-def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, tasks_to_hold,
+def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: str, trait_type: str, tasks_to_hold,
                            vep_path: str, docker_image: str, gene_map_path: str = None, reference: str = 'GRCh38',
-                           analysis_type: str = 'gene',
-                           n_threads: int = 8, storage: str = '500Mi'):
+                           analysis_type: str = 'gene', n_threads: int = 8, storage: str = '500Mi'):
 
     load_data_task: pipeline.pipeline.Task = p.new_task(name=f'load_data',
                                                         attributes={
-                                                            'pheno': pheno
+                                                            'pheno': pheno,
+                                                            'coding': coding,
+                                                            'trait_type': trait_type
                                                         }).image(docker_image).cpu(n_threads).storage(storage)
-    load_data_task.depends_on(*tasks_to_hold)
-    coding = None
-    if '-' in pheno:
-        pheno, coding = pheno.split('-')
+    load_data_task.depends_on(*tasks_to_hold).always_run()
     python_command = f"""python3 {SCRIPT_DIR}/load_results.py
     --input_dir {output_root}
     --pheno {pheno}
     {"--coding " + coding if coding else ''}
+    --trait_type {trait_type}
     {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
     --ukb_vep_ht_path {vep_path}
     --overwrite --reference {reference}
