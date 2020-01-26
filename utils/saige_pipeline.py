@@ -235,7 +235,7 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
                                                             'coding': coding,
                                                             'trait_type': trait_type
                                                         }).image(docker_image).cpu(n_threads).storage(storage)
-    load_data_task.depends_on(*tasks_to_hold).always_run()
+    load_data_task.always_run().depends_on(*tasks_to_hold)
     python_command = f"""python3 {SCRIPT_DIR}/load_results.py
     --input_dir {output_root}
     --pheno {pheno}
