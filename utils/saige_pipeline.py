@@ -283,3 +283,37 @@ def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_
 
 def get_tasks_from_pipeline(p):
     return dict(Counter(map(lambda x: x.name, p.select_tasks(""))))
+
+
+def load_jobs_by_batch_ids(batch_ids, billing_project: str = 'ukb_diverse_pops'):
+    import batch_client
+    bc = batch_client.client.BatchClient(billing_project=billing_project)
+    if isinstance(batch_ids, int):
+        batch_ids = [batch_ids]
+    all_jobs = []
+    for batch_id in batch_ids:
+        batch = bc.get_batch(batch_id)
+        all_jobs.extend(list(batch.jobs()))
+    return all_jobs
+
+
+def get_costs_by_attribute(attributes, jobs = None, batch_ids = None, filter_job_name: str = None, billing_project: str = 'ukb_diverse_pops'):
+    import warnings
+    if batch_ids is not None:
+        jobs = load_jobs_by_batch_ids(batch_ids)
+    if jobs is None:
+        warnings.warn('batch_ids and jobs are both None. Bailing...')
+        return None
+
+    from collections import defaultdict
+    summary = defaultdict(float)
+    for job in jobs:
+        if filter_job_name is not None and job['attributes'].get('name') != filter_job_name:
+            continue
+        key = tuple(job['attributes'].get(attribute, '') for attribute in attributes)
+        summary[key] += float(job['cost'].lstrip('$'))
+
+    ret_summary = {}
+    for k, v in summary.items():
+        ret_summary[k] = round(v, 4)
+    return ret_summary
