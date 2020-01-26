@@ -8,7 +8,9 @@ saige_pheno_types = {
     'biomarkers': 'quantitative',
     'categorical': 'binary',
     'icd': 'binary',
-    'phecode': 'binary'
+    'icd_all': 'binary',
+    'phecode': 'binary',
+    'prescriptions': 'binary'
 }
 
 

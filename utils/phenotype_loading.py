@@ -409,7 +409,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
         )
 
     for data_type, mt in pheno_file_dict.items():
-        mt = mt.annotate_rows(**cov_ht[mt.row_key])
+        mt = mt.select_rows(**cov_ht[mt.row_key])
         print(data_type)
         if data_type == 'phecode':
             mt = mt.key_cols_by(pheno=mt.phecode, coding=mt.phecode_sex)
@@ -439,10 +439,12 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
 
             def check_func(x):
                 return x if data_type == 'categorical' else hl.is_defined(x)
+            meaning_field = 'meaning' if data_type == 'categorical' else 'Field'
+            path_field = 'Field' if data_type == 'categorical' else 'Path'
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(check_func(mt[sex])) for sex in sexes},
                                 data_type=data_type,
-                                meaning=hl.coalesce(*[mt[f'{sex}_pheno'].Field for sex in sexes]),
-                                path=hl.coalesce(*[mt[f'{sex}_pheno'].Path for sex in sexes]))
+                                meaning=hl.coalesce(*[mt[f'{sex}_pheno'][meaning_field] for sex in sexes]),
+                                path=hl.coalesce(*[mt[f'{sex}_pheno'][path_field] for sex in sexes]))
             mt = mt.select_entries(**{sex: hl.float64(mt[sex]) for sex in sexes})
 
         elif 'icd_code' in list(mt.col_key):
