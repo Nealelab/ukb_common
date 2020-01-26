@@ -253,6 +253,32 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
               'pyspark-shell" ' + python_command
     load_data_task.command(command)
     p.write_output(load_data_task.stdout, f'{output_root}/{pheno}_loading.log')
+    return load_data_task
+
+
+def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_image: str, R_docker_image: str,
+                    n_threads: int = 8, storage: str = '500Mi'):
+
+    qq_export_task: pipeline.pipeline.Task = p.new_task(name=f'qq_export').image(export_docker_image).cpu(n_threads).storage(storage)
+    qq_export_task.depends_on(*tasks_to_hold)
+
+    python_command = f"""python3 {SCRIPT_DIR}/export_results_for_qq.py
+    --input_dir {output_root}
+    --output_file {qq_export_task.out}
+    --n_threads {n_threads}
+    ; """.replace('\n', ' ')
+
+    command = 'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory=24g ' \
+              'pyspark-shell" ' + python_command
+    qq_export_task.command(command)
+
+    qq_task: pipeline.pipeline.Task = p.new_task(name=f'qq_plot').image(R_docker_image).cpu(n_threads).storage(storage)
+    qq_task.declare_resource_group(result={ext: f'{{root}}_Pvalue_{ext}'
+                                           for ext in ('qqplot.png', 'manhattan.png', 'manhattan_loglog.png', 'qquantiles.txt')})
+    R_command = f"/saige-pipelines/scripts/qqplot.R -f {qq_export_task.out} -o {qq_task.result} -p Pvalue; "
+    qq_task.command(R_command)
+
+    p.write_output(qq_task.result, output_root)
 
 
 def get_tasks_from_pipeline(p):
