@@ -116,8 +116,7 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_t
     return extract_task
 
 
-def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.Resource, pheno_name: str,
-                  trait_type: str, covariates: str,
+def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.Resource, trait_type: str, covariates: str,
                   plink_file_root: str, docker_image: str, sparse_grm: pipeline.pipeline.Resource = None,
                   sparse_grm_extension: str = None, skip_model_fitting: bool = False,
                   n_threads: int = 8, storage: str = '1500Mi'):
@@ -128,7 +127,6 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
     fit_null_task = p.new_task(name=f'fit_null_model',
                                attributes={
                                    'analysis_type': analysis_type,
-                                   'pheno': pheno_name,
                                    'trait_type': trait_type
                                }).cpu(n_threads).storage(storage).image(docker_image)
     output_files = {ext: f'{{root}}{ext if ext.startswith("_") else "." + ext}' for ext in
@@ -143,7 +141,7 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
     #     bim_fix_command += (f"; zcat {pheno_file.gz} | perl -p -e 's/true/1/g' | perl -p -e 's/false/0/g' "
     #                         f"| gzip -c > {pheno_file.gz}.temp.gz; mv {pheno_file.gz}.temp.gz {pheno_file.gz}")
 
-    command = (f'Rscript /usr/local/bin/step1_fitNULLGLMM.R '
+    command = (f'set -o pipefail; Rscript /usr/local/bin/step1_fitNULLGLMM.R '
                f'--plinkFile={in_bfile} '
                f'--phenoFile={pheno_file} '
                f'--covarColList={covariates} '
@@ -196,8 +194,6 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
                f'--GMMATmodelFile={model_file} '
                f'--varianceRatioFile={variance_ratio_file} '
                f'--SAIGEOutputFile={run_saige_task.result} ')
-    if saige_pheno_types[trait_type] == 'binary':
-        command += f'--IsOutputPvalueNAinGroupTestforBinary=TRUE '
 
     if use_bgen:
         command += (f'--bgenFile={vcf_file.bgen} '
@@ -208,6 +204,8 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
                     f'--chrom={chrom} '
                     f'--vcfField=GT ')
     if analysis_type == "gene":
+        if saige_pheno_types[trait_type] == 'binary':
+            command += f'--IsOutputPvalueNAinGroupTestforBinary=TRUE '
         command += (f'--groupFile={group_file} '
                     f'--sparseSigmaFile={sparse_sigma_file} '
                     f'--IsSingleVarinGroupTest=TRUE '
