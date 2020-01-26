@@ -40,8 +40,8 @@ def create_sparse_grm(p: Pipeline, output_path: str, plink_file_root: str, docke
 def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module: str = 'ukb_exomes',
                         gene: str = None, interval: str = None, groups=None, gene_map_ht_path: str = None,
                         set_missing_to_hom_ref: bool = False, callrate_filter: float = 0.0, adj: bool = True,
-                        export_bgen: bool = True,
-                        n_threads: int = 2, storage: str = '500Mi', additional_args: str = '', memory: str = ''):
+                        export_bgen: bool = True, input_dosage: bool = False, reference: str = 'GRCh38',
+                        n_threads: int = 8, storage: str = '500Mi', additional_args: str = '', memory: str = ''):
     if groups is None:
         # groups = {'pLoF', 'missense|LC', 'pLoF|missense|LC', 'synonymous'}
         groups = {'pLoF', 'missense|LC', 'synonymous'}
@@ -59,18 +59,20 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
                                                  'vcf.gz.tbi': f'{{root}}.vcf.gz.tbi'})
 
     output_file = f'{extract_task.bgz}.bgz' if not export_bgen else extract_task.out
-    command = f"""python3 {SCRIPT_DIR}/extract_vcf_from_mt.py
+    command = f"""set -o pipefail; python3 {SCRIPT_DIR}/extract_vcf_from_mt.py
     --load_module {module}
     {"--additional_args " + additional_args if additional_args else ''}
     {"--gene " + gene if gene else ""}
     {"--interval " + interval if interval else ""}
     --groups "{','.join(groups)}"
+    --reference {reference}
     {"--gene_map_ht_path " + gene_map_ht_path if gene_map_ht_path else ""} 
     {"--callrate_filter " + str(callrate_filter) if callrate_filter else ""} 
-    {"--export_bgen" if export_bgen else ""} 
+    {"--export_bgen" if export_bgen else ""}
+    {"--input_bgen" if input_dosage else ""}
     {"" if set_missing_to_hom_ref else "--mean_impute_missing"}
     {"" if adj else "--no_adj"} 
-    --group_output_file {extract_task.group_file}
+    {"--group_output_file " + extract_task.group_file if gene_map_ht_path else ""}
     --output_file {output_file} | tee {extract_task.stdout}
     ;""".replace('\n', ' ')
 
@@ -81,7 +83,8 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     extract_task.command(command.replace('\n', ' '))
 
     p.write_output(extract_task.out, output_root)
-    p.write_output(extract_task.group_file, f'{output_root}.gene.txt')
+    if gene_map_ht_path:
+        p.write_output(extract_task.group_file, f'{output_root}.gene.txt')
     p.write_output(extract_task.stdout, f'{output_root}.log')
     return extract_task
 
