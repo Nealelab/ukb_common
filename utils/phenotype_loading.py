@@ -143,10 +143,10 @@ def get_phesant_reassignments(phesant_summary):
         reassign=phesant_summary['PHESANT.reassignments'].split(' ')[1].split('\|').map(lambda x: x.split('=')))
     ht = phesant_summary.explode('reassign')
     ht = ht.filter(ht.reassign[1] != 'NA')
-    ht = ht.transmute(reassign_from=hl.int(ht.reassign[0]), reassign_to=hl.int(ht.reassign[1]))
+    ht = ht.transmute(reassign_from=ht.reassign[0], reassign_to=ht.reassign[1])
     ht = ht.key_by(
         pheno=hl.int(ht.FieldID.split('_')[0]),
-        coding=hl.or_missing(hl.len(ht.FieldID.split('_')) > 1, hl.int(ht.FieldID.split('_')[1]))
+        coding=hl.or_missing(hl.len(ht.FieldID.split('_')) > 1, ht.FieldID.split('_')[1])
     )
     return ht.filter(ht.reassign_to == ht.coding)
 
@@ -434,6 +434,11 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
             mt = mt.select_entries(**format_entries(mt.value, mt.sex))
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
                                 data_type=data_type, meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
+        elif data_type == 'custom':
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(
+                hl.cond(mt.data_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
+            ) for sex in sexes}, data_type=mt.data_type, meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
         elif 'pheno' in list(mt.col_key):
             mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
 
