@@ -16,7 +16,18 @@ icd_codings_ht_path = get_coding_path(19, 'ht')
 icd9_codings_ht_path = get_coding_path(87, 'ht')
 
 
-PILOT_PHENOTYPES = set(map(lambda x: (x, '', 'continuous'), {'50', '699', '23104'})).union(
+PILOT_PHENOTYPES = set(map(lambda x: (x, 'irnt', 'continuous'), {'50', '699', '23104'})).union(
     set(map(lambda x: (*x, 'categorical'), {('20004', '1095'), ('20004', '1479')}))).union(
     set(map(lambda x: (x, '', 'icd'), {'K519', 'K509', 'E109', 'E119', 'J459', 'I251',
-                                       'K51', 'K50', 'E10', 'E11', 'J45', 'I25'})))
+                                       'K51', 'K50', 'E10', 'E11', 'J45', 'I25'}))).union(
+    set(map(lambda x: (x, 'icd10', 'icd_all'), {'K519', 'K509', 'E109', 'E119', 'J459', 'I251',
+                                       'K51', 'K50', 'E10', 'E11', 'J45', 'I25'}))).union(
+    set(map(lambda x: (x, 'both_sexes', 'phecode'), {'401', '411'}))).union(
+    {('1717', '1717', 'continuous'),
+     ('random', 'random', 'continuous'),
+     ('random', 'random_strat', 'continuous'),
+     ('whr', 'whr', 'continuous'),
+     ('1747', '4', 'categorical'),
+     ('30040', 'irnt', 'continuous'),
+     ('30890', '30890', 'biomarkers'),
+     ('HMG CoA reductase inhibitor,statin', '', 'prescriptions')})
