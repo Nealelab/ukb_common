@@ -1,6 +1,7 @@
 from hailtop import pipeline
 from hailtop.pipeline.pipeline import *
 from collections import Counter
+from shlex import quote as shq
 
 SCRIPT_DIR = '/ukb_common/saige'
 saige_pheno_types = {
@@ -89,18 +90,19 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     return extract_task
 
 
-def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, module: str, docker_image: str,
-                 trait_type: str = 'icd', n_threads: int = 8, storage: str = '500Mi', additional_args: str = ''):
+def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_type: str, module: str,
+                 docker_image: str, n_threads: int = 8, storage: str = '500Mi', additional_args: str = ''):
     extract_task: pipeline.pipeline.Task = p.new_task(name='extract_pheno',
                                                       attributes={
                                                           'pheno': pheno,
+                                                          'coding': coding,
                                                           'trait_type': trait_type
                                                       })
     extract_task.image(docker_image).cpu(n_threads).storage(storage)
-    python_command = f"""python3 {SCRIPT_DIR}/export_pheno.py
+    python_command = f"""set -o pipefail; python3 {SCRIPT_DIR}/export_pheno.py
     --load_module {module}
-    {"--binary_pheno" if trait_type != "continuous" else ""}
-    --pheno {pheno} --sex both_sexes
+    --trait_type {trait_type}
+    --pheno {shq(pheno)} --sex both_sexes
     {"--additional_args " + additional_args if additional_args else ''}
     {"--coding " + coding if coding else ''}
     --output_file {extract_task.out}
