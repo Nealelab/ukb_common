@@ -21,7 +21,7 @@ def get_vep_formatted_data(ukb_vep_path: str):
         annotation=annotation_case_builder(ht.vep.worst_csq_by_gene_canonical))
 
 
-def load_variant_data(directory: str, pheno: str, coding: str, ukb_vep_path: str, extension: str = 'single.txt',
+def load_variant_data(directory: str, pheno: str, coding: str, trait_type: str, ukb_vep_path: str, extension: str = 'single.txt',
                       n_cases: int = -1, n_controls: int = -1, overwrite: bool = False):
     output_ht_path = f'{directory}/variant_results.ht'
     ht = hl.import_table(f'{directory}/*.{extension}', delimiter=' ', impute=True)
@@ -29,19 +29,19 @@ def load_variant_data(directory: str, pheno: str, coding: str, ukb_vep_path: str
     marker_id_col = 'markerID' if extension == 'single.txt' else 'SNPID'
     locus_alleles = ht[marker_id_col].split('_')
     ht = ht.key_by(locus=hl.parse_locus(locus_alleles[0]), alleles=locus_alleles[1].split('/'),
-                   pheno=pheno, coding=coding).distinct().naive_coalesce(50)
+                   pheno=pheno, coding=coding, trait_type=trait_type).distinct().naive_coalesce(50)
     if marker_id_col == 'SNPID':
         ht = ht.drop('CHR', 'POS', 'rsid', 'Allele1', 'Allele2')
     ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(n_cases=n_cases, n_controls=n_controls)
     ht = ht.annotate(**get_vep_formatted_data(ukb_vep_path)[
         hl.struct(locus=ht.locus, alleles=ht.alleles)])  # TODO: fix this for variants that overlap multiple genes
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls')
-    mt = ht.to_matrix_table(['locus', 'alleles'], ['pheno', 'coding'],
+    mt = ht.to_matrix_table(['locus', 'alleles'], ['pheno', 'coding', 'trait_type'],
                             [marker_id_col, 'gene', 'annotation'], []).annotate_cols(n_cases=n_cases, n_controls=n_controls)
     mt.checkpoint(output_ht_path.replace('.ht', '.mt'), overwrite=overwrite, _read_if_exists=not overwrite)
 
 
-def load_gene_data(directory: str, pheno: str, coding: str, gene_ht_map_path: str,
+def load_gene_data(directory: str, pheno: str, coding: str, trait_type: str, gene_ht_map_path: str,
                    n_cases: int = -1, n_controls: int = -1, overwrite: bool = False):
     output_ht_path = f'{directory}/gene_results.ht'
     print(f'Loading: {directory}/*.gene.txt ...')
@@ -52,12 +52,12 @@ def load_gene_data(directory: str, pheno: str, coding: str, gene_ht_map_path: st
     fields = ht.Gene.split('_')
     gene_ht = hl.read_table(gene_ht_map_path).select('interval').distinct()
     ht = ht.key_by(gene_id=fields[0], gene_symbol=fields[1], annotation=fields[2],
-                   pheno=pheno, coding=coding).drop('Gene').naive_coalesce(10).annotate_globals(n_cases=n_cases, n_controls=n_controls)
+                   pheno=pheno, coding=coding, trait_type=trait_type).drop('Gene').naive_coalesce(10).annotate_globals(n_cases=n_cases, n_controls=n_controls)
     ht = ht.annotate(total_variants=hl.sum([v for k, v in list(ht.row_value.items()) if 'Nmarker' in k]),
                      interval=gene_ht.key_by('gene_id')[ht.gene_id].interval)
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls')
     mt = ht.to_matrix_table(['gene_symbol', 'gene_id', 'annotation', 'interval'],
-                            ['pheno', 'coding'], [], []).annotate_cols(n_cases=n_cases, n_controls=n_controls)
+                            ['pheno', 'coding', 'trait_type'], [], []).annotate_cols(n_cases=n_cases, n_controls=n_controls)
     mt.checkpoint(output_ht_path.replace('.ht', '.mt'), overwrite=overwrite, _read_if_exists=not overwrite)
 
 
