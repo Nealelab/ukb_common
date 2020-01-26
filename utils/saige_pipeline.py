@@ -249,8 +249,8 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
     ;""".replace('\n', ' ')
 
     python_command = python_command.replace('\n', '; ').strip()
-    command = 'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory=4g ' \
-              '--conf spark.executor.memory=24g pyspark-shell" ' + python_command
+    command = 'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory=24g ' \
+              'pyspark-shell" ' + python_command
     load_data_task.command(command)
     p.write_output(load_data_task.stdout, f'{output_root}/{pheno}_loading.log')
 
