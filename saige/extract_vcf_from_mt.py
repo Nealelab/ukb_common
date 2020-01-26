@@ -7,14 +7,14 @@ import warnings
 import importlib
 
 
-def gt_to_gp(mt, location: str = 'gp'):
+def gt_to_gp(mt, location: str = 'GP'):
     return mt.annotate_entries(**{location: hl.or_missing(
         hl.is_defined(mt.GT),
         hl.map(lambda i: hl.cond(mt.GT.unphased_diploid_gt_index() == i, 1.0, 0.0),
                hl.range(0, hl.triangle(hl.len(mt.alleles)))))})
 
 
-def impute_missing_gp(mt, location: str = 'gp', mean_impute: bool = True):
+def impute_missing_gp(mt, location: str = 'GP', mean_impute: bool = True):
     mt = mt.annotate_entries(_gp = mt.location)
     if mean_impute:
         mt = mt.annotate_rows(_mean_gp=hl.agg.array_agg(lambda x: hl.agg.mean(x), mt._gp))
@@ -55,17 +55,21 @@ def main(args):
     if not args.no_adj:
         mt = mt.filter_entries(mt.adj)
 
-    mt = hl.filter_intervals(mt, interval).select_entries('GT')
-    mt = mt.filter_rows(hl.agg.count_where(mt.GT.is_non_ref()) > 0)
+    mt = hl.filter_intervals(mt, interval)
+
+    if not args.input_bgen:
+        mt = mt.select_entries('GT')
+        mt = mt.filter_rows(hl.agg.count_where(mt.GT.is_non_ref()) > 0)
     mt = mt.annotate_rows(rsid=mt.locus.contig + ':' + hl.str(mt.locus.position) + '_' + mt.alleles[0] + '/' + mt.alleles[1])
 
     if args.callrate_filter:
         mt = mt.filter_rows(hl.agg.fraction(hl.is_defined(mt.GT)) >= args.callrate_filter)
 
     if args.export_bgen:
-        mt = gt_to_gp(mt)
-        mt = impute_missing_gp(mt, mean_impute=args.mean_impute_missing)
-        hl.export_bgen(mt, args.output_file, gp=mt.gp, varid=mt.rsid)
+        if not args.input_bgen:
+            mt = gt_to_gp(mt)
+            mt = impute_missing_gp(mt, mean_impute=args.mean_impute_missing)
+        hl.export_bgen(mt, args.output_file, gp=mt.GP, varid=mt.rsid)
     else:
         mt = mt.annotate_entries(GT=hl.or_else(mt.GT, hl.call(0, 0)))
         # Note: no mean-imputation for VCF
@@ -84,6 +88,7 @@ if __name__ == '__main__':
     parser.add_argument('--gene', help='Gene to export')
     parser.add_argument('--interval', help='Interval to export')
 
+    parser.add_argument('--input_bgen', help='Input is BGEN instead of MT', action='store_true')
     parser.add_argument('--no_adj', help='Use all genotypes instead of only high-quality ones', action='store_true')
     parser.add_argument('--mean_impute_missing', help='Whether to mean impute missing genotypes (BGEN only) '
                                                       '(default: set to hom ref)', action='store_true')
