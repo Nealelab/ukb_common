@@ -30,4 +30,4 @@ PILOT_PHENOTYPES = set(map(lambda x: (x, 'irnt', 'continuous'), {'50', '699', '2
      ('1747', '4', 'categorical'),
      ('30040', 'irnt', 'continuous'),
      ('30890', '30890', 'biomarkers'),
-     ('HMG CoA reductase inhibitor,statin', '', 'prescriptions')})
+     ('HMG CoA reductase inhibitor|statin', '', 'prescriptions')})

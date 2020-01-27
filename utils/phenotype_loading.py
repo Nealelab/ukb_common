@@ -421,9 +421,9 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
         elif data_type == 'prescriptions':
             mt = mt.select_entries(value=hl.or_else(hl.len(mt.values) > 0, False))
             mt2 = mt.group_cols_by(
-                pheno=mt.Drug_Category_and_Indication, coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication,
+                pheno=mt.Drug_Category_and_Indication.replace(',', '|'), coding='',Drug_Category_and_Indication=mt.Drug_Category_and_Indication,
             ).aggregate(value=hl.agg.any(mt.value))
-            mt = mt.key_cols_by(pheno=mt.Generic_Name, coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication).select_cols()
+            mt = mt.key_cols_by(pheno=mt.Generic_Name.replace(',', '|'), coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication).select_cols()
             mt = mt.union_cols(mt2).key_cols_by('pheno', 'coding')
             mt = mt.select_cols(**compute_cases_binary(mt.value, mt.sex),
                                 data_type=data_type, meaning=mt.pheno,
