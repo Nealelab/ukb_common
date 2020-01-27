@@ -237,8 +237,8 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
                                                         }).image(docker_image).cpu(n_threads).storage(storage)
     load_data_task.always_run().depends_on(*tasks_to_hold)
     python_command = f"""python3 {SCRIPT_DIR}/load_results.py
-    --input_dir {output_root}
-    --pheno {pheno}
+    --input_dir {shq(output_root)}
+    --pheno {shq(pheno)}
     {"--coding " + coding if coding else ''}
     --trait_type {trait_type}
     {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
@@ -262,7 +262,7 @@ def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_
     qq_export_task.always_run().depends_on(*tasks_to_hold)
 
     python_command = f"""python3 {SCRIPT_DIR}/export_results_for_qq.py
-    --input_dir {output_root}
+    --input_dir {shq(output_root)}
     --output_file {qq_export_task.out}
     --n_threads {n_threads}
     ; """.replace('\n', ' ')
@@ -277,6 +277,7 @@ def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_
     qq_task.command(R_command)
 
     p.write_output(qq_task.result, output_root)
+    return qq_export_task, qq_task
 
 
 def get_tasks_from_pipeline(p):
