@@ -121,7 +121,7 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_t
 def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.Resource, trait_type: str, covariates: str,
                   plink_file_root: str, docker_image: str, sparse_grm: pipeline.pipeline.Resource = None,
                   sparse_grm_extension: str = None, skip_model_fitting: bool = False,
-                  n_threads: int = 8, storage: str = '1500Mi'):
+                  n_threads: int = 16, storage: str = '1500Mi', memory: str = '60G'):
     analysis_type = "variant" if sparse_grm is None else "gene"
     pheno_col = 'value'
     user_id_col = 'userId'
@@ -130,7 +130,7 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
                                attributes={
                                    'analysis_type': analysis_type,
                                    'trait_type': trait_type
-                               }).cpu(n_threads).storage(storage).image(docker_image)
+                               }).cpu(n_threads).storage(storage).image(docker_image).memory(memory)
     output_files = {ext: f'{{root}}{ext if ext.startswith("_") else "." + ext}' for ext in
                    ('rda', '_30markers.SAIGE.results.txt', f'{analysis_type}.varianceRatio.txt')}
     if analysis_type == 'gene':
@@ -249,8 +249,7 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
     ;""".replace('\n', ' ')
 
     python_command = python_command.replace('\n', '; ').strip()
-    command = 'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory=24g ' \
-              'pyspark-shell" ' + python_command
+    command = f'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell" ' + python_command
     load_data_task.command(command)
     p.write_output(load_data_task.stdout, f'{output_root}/{pheno}_loading.log')
     return load_data_task
@@ -259,8 +258,8 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
 def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_image: str, R_docker_image: str,
                     n_threads: int = 8, storage: str = '500Mi'):
 
-    qq_export_task: pipeline.pipeline.Task = p.new_task(name=f'qq_export').image(export_docker_image).cpu(n_threads).storage(storage)
-    qq_export_task.depends_on(*tasks_to_hold)
+    qq_export_task: pipeline.pipeline.Task = p.new_task(name='qq_export').image(export_docker_image).cpu(n_threads).storage(storage)
+    qq_export_task.always_run().depends_on(*tasks_to_hold)
 
     python_command = f"""python3 {SCRIPT_DIR}/export_results_for_qq.py
     --input_dir {output_root}
@@ -268,11 +267,10 @@ def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_
     --n_threads {n_threads}
     ; """.replace('\n', ' ')
 
-    command = 'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory=24g ' \
-              'pyspark-shell" ' + python_command
+    command = f'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell" ' + python_command
     qq_export_task.command(command)
 
-    qq_task: pipeline.pipeline.Task = p.new_task(name=f'qq_plot').image(R_docker_image).cpu(n_threads).storage(storage)
+    qq_task: pipeline.pipeline.Task = p.new_task(name='qq_plot').image(R_docker_image).cpu(n_threads).storage(storage).always_run()
     qq_task.declare_resource_group(result={ext: f'{{root}}_Pvalue_{ext}'
                                            for ext in ('qqplot.png', 'manhattan.png', 'manhattan_loglog.png', 'qquantiles.txt')})
     R_command = f"/saige-pipelines/scripts/qqplot.R -f {qq_export_task.out} -o {qq_task.result} -p Pvalue; "
