@@ -296,23 +296,32 @@ def load_jobs_by_batch_ids(batch_ids, billing_project: str = 'ukb_diverse_pops')
     return all_jobs
 
 
-def get_costs_by_attribute(attributes, jobs = None, batch_ids = None, filter_job_name: str = None, billing_project: str = 'ukb_diverse_pops'):
+def get_costs_by_attribute(attributes, jobs = None, batch_ids = None, filter_job_name: str = None, get_status_instead: bool = False,
+                           billing_project: str = 'ukb_diverse_pops'):
     import warnings
     if batch_ids is not None:
-        jobs = load_jobs_by_batch_ids(batch_ids)
+        jobs = load_jobs_by_batch_ids(batch_ids, billing_project=billing_project)
     if jobs is None:
         warnings.warn('batch_ids and jobs are both None. Bailing...')
         return None
 
     from collections import defaultdict
-    summary = defaultdict(float)
+    summary = defaultdict(float) if not get_status_instead else defaultdict(lambda: defaultdict(int))
     for job in jobs:
         if filter_job_name is not None and job['attributes'].get('name') != filter_job_name:
             continue
         key = tuple(job['attributes'].get(attribute, '') for attribute in attributes)
-        summary[key] += float(job['cost'].lstrip('$'))
+        if get_status_instead:
+            summary[key][job['state']] += 1
+        else:
+            summary[key] += float(job['cost'].lstrip('$'))
 
     ret_summary = {}
     for k, v in summary.items():
-        ret_summary[k] = round(v, 4)
+        if get_status_instead:
+            if k not in ret_summary: ret_summary[k] = {}
+            for k2, v2 in v.items():
+                ret_summary[k][k2] = v2
+        else:
+            ret_summary[k] = round(v, 4)
     return ret_summary
