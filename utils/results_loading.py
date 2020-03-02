@@ -82,7 +82,7 @@ def get_cases_and_controls_from_log(log_prefix):
     return cases, controls
 
 
-def union_mts_by_tree(all_mts, temp_dir):
+def union_mts_by_tree(all_mts, temp_dir, debug=False):
     chunk_size = int(len(all_mts) ** 0.5) + 1
     outer_mts = []
     for i in range(chunk_size):
@@ -90,15 +90,166 @@ def union_mts_by_tree(all_mts, temp_dir):
         mt = all_mts[i * chunk_size]
         for j in range(1, chunk_size):
             if i * chunk_size + j >= len(all_mts): break
-            # try:
-            mt = mt.union_cols(all_mts[i * chunk_size + j], row_join_type='outer')
-            # except:
-            #     print(f'problem with {i * chunk_size} and {i * chunk_size + j}')
-            #     mt.describe()
-            #     all_mts[i * chunk_size + j].describe()
-            #     sys.exit(1)
+            try:
+                mt = mt.union_cols(all_mts[i * chunk_size + j], row_join_type='outer')
+            except:
+                if debug:
+                    print(f'problem with {i * chunk_size} and {i * chunk_size + j}')
+                    mt.describe()
+                    all_mts[i * chunk_size + j].describe()
+                raise
         outer_mts.append(mt.checkpoint(f'{temp_dir}/temp_output_{i}.mt', overwrite=True))
     mt = outer_mts[0]
     for next_mt in outer_mts[1:]:
         mt = mt.union_cols(next_mt, row_join_type='outer')
     return mt
+
+
+def union_hts_by_tree(all_hts, temp_dir, debug=False, inner_mode = 'overwrite'):
+    chunk_size = int(len(all_hts) ** 0.5) + 1
+    outer_hts = []
+    for i in range(chunk_size):
+        if i * chunk_size >= len(all_hts): break
+        hts = all_hts[i * chunk_size:(i + 1) * chunk_size]
+        try:
+            if isinstance(hts[0], str):
+                hts = list(map(lambda x: hl.read_table(x), hts))
+            ht = hts[0].union(*hts[1:], unify=True)
+        except:
+            if debug:
+                print(f'problem in range {i * chunk_size}-{i * chunk_size + chunk_size}')
+                _ = [ht.describe() for ht in hts]
+            raise
+        outer_hts.append(ht.checkpoint(f'{temp_dir}/temp_output_{i}.ht', **{inner_mode: True}))
+    return outer_hts[0].union(*outer_hts[1:], unify=True)
+
+
+def get_files_in_parent_directory(parent_dir, fname: str = 'variant_results.ht'):
+    all_outputs = []
+    for directory in parent_dir:
+        if not directory['is_dir']:
+            continue
+        file_path = f'{directory["path"]}/{fname}'
+        if hl.hadoop_exists(f'{file_path}/_SUCCESS'):
+            all_outputs.append(file_path)
+    return all_outputs
+
+
+def union_ht(all_hts, col_fields, pheno_dict, temp_dir, inner_mode: str = 'overwrite'):
+    print(f'Unioning {len(all_hts)} HTs...')
+    ht = union_hts_by_tree(all_hts, temp_dir, inner_mode=inner_mode)
+    return ht.annotate(**pheno_dict[ht.key.select(*col_fields)])
+
+
+def pull_out_col_keys(all_hts, row_keys, col_keys):
+    rekeyed_hts = []
+    for ht in all_hts:
+        glob = ht.aggregate(hl.agg.take(hl.struct(**{x: ht[x] for x in col_keys}), 1)[0], _localize=False)
+        rekeyed_hts.append(ht.key_by(*row_keys).drop(*col_keys).annotate_globals(**glob))
+    return rekeyed_hts
+
+
+def join_pheno_hts_to_mt(all_hts, row_keys, col_keys, pheno_dict, temp_dir, inner_mode: str = 'overwrite',
+                         repartition_final: int = None):
+    rekeyed_hts = pull_out_col_keys(all_hts, row_keys, col_keys)
+    mt = mwzj_hts_by_tree(rekeyed_hts, temp_dir, col_keys, debug=True,
+                          inner_mode=inner_mode, repartition_final=repartition_final)
+    print(f'Unioned MTs...')
+    mt = mt.annotate_cols(**pheno_dict[mt.col_key])  # .key_rows_by('locus', 'alleles')
+    return mt
+
+
+def unify_saige_ht_schema(ht):
+    if 'AF.Cases' not in list(ht.row):
+        ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
+                       **{'p.value.NA': hl.null(hl.tfloat64), 'Is.SPA.converge': hl.null(hl.tint32),
+                          'varT': ht.varT, 'varTstar': ht.varTstar, 'AF.Cases': hl.null(hl.tfloat64),
+                          'AF.Controls': hl.null(hl.tfloat64), 'Pvalue': ht.Pvalue,
+                          'gene': hl.or_else(ht.gene, ''), 'annotation': hl.or_else(ht.annotation, '')})
+    else:
+        ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
+                       'p.value.NA', 'Is.SPA.converge', 'varT', 'varTstar', 'AF.Cases',
+                       'AF.Controls', 'Pvalue', gene=hl.or_else(ht.gene, ''), annotation=hl.or_else(ht.annotation, ''))
+    return ht
+
+
+def unify_saige_ht_variant_schema(ht):
+    shared = ('markerID', 'AC', 'AF', 'N', 'BETA', 'SE', 'Tstat', 'varT', 'varTstar')
+    new_floats = ('AF.Cases', 'AF.Controls')
+    new_ints = ('N.Cases', 'N.Controls')
+    shared_end = ('Pvalue', 'gene', 'annotation')
+    if 'AF.Cases' not in list(ht.row):
+        ht = ht.select(*shared, **{field: hl.null(hl.tfloat64) for field in new_floats},
+                       **{field: hl.null(hl.tint32) for field in new_ints},
+                       **{field: ht[field] for field in shared_end})
+    else:
+        ht = ht.select(*shared, *new_floats, *new_ints, *shared_end)
+    return ht.annotate(SE=hl.float64(ht.SE))
+
+
+def unify_saige_burden_ht_schema(ht):
+    shared = ('Pvalue', *(f'Nmarker_MACCate_{i}' for i in range(1, 9)), 'markerIDs', 'markerAFs',
+              'Pvalue_Burden', 'Pvalue_SKAT', 'BETA_Burden', 'SE_Burden')
+    new_floats = ('Pvalue.NA', 'Pvalue_Burden.NA', 'Pvalue_SKAT.NA', 'BETA_Burden.NA')
+    new_strings = ('SE_Burden.NA', )
+    shared_end = ('total_variants', 'interval')
+    if 'Pvalue.NA' not in list(ht.row):
+        ht = ht.select(*shared, **{field: hl.null(hl.tfloat64) for field in new_floats},
+                       **{field: hl.null(hl.tstr) for field in new_strings},
+                       **{field: ht[field] for field in shared_end})
+    else:
+        ht = ht.select(*shared, *new_floats, *new_strings, *shared_end)
+    return ht.annotate(**{'SE_Burden': hl.float64(ht.SE_Burden), 'SE_Burden.NA': hl.float64(ht['SE_Burden.NA'])})
+
+
+def get_n_even_intervals(n):
+    ref = hl.default_reference()
+    genome_size = sum(ref.lengths.values())
+    partition_size = int(genome_size / n) + 1
+    return list(map(
+        lambda x: hl.Interval(hl.eval(hl.locus_from_global_position(x * partition_size)),
+                              hl.eval(hl.locus_from_global_position(min(x * partition_size + partition_size, genome_size - 1)))),
+        range(n)))
+
+
+def mwzj_hts_by_tree(all_hts, temp_dir, globals_for_col_key, debug=False, inner_mode = 'overwrite',
+                     repartition_final: int = None):
+    chunk_size = int(len(all_hts) ** 0.5) + 1
+    outer_hts = []
+
+    checkpoint_kwargs = {inner_mode: True}
+    if repartition_final is not None:
+        intervals = get_n_even_intervals(repartition_final)
+        checkpoint_kwargs['_intervals'] = intervals
+
+    if debug: print(f'Running chunk size {chunk_size}...')
+    for i in range(chunk_size):
+        if i * chunk_size >= len(all_hts): break
+        hts = all_hts[i * chunk_size:(i + 1) * chunk_size]
+        if debug: print(f'Going from {i * chunk_size} to {(i + 1) * chunk_size} ({len(hts)} HTs)...')
+        try:
+            if isinstance(hts[0], str):
+                hts = list(map(lambda x: hl.read_table(x), hts))
+            ht = hl.Table.multi_way_zip_join(hts, 'row_field_name', 'global_field_name')
+        except:
+            if debug:
+                print(f'problem in range {i * chunk_size}-{i * chunk_size + chunk_size}')
+                _ = [ht.describe() for ht in hts]
+            raise
+        outer_hts.append(ht.checkpoint(f'{temp_dir}/temp_output_{i}.ht', **checkpoint_kwargs))
+    ht = hl.Table.multi_way_zip_join(outer_hts, 'row_field_name_outer', 'global_field_name_outer')
+    ht = ht.transmute(inner_row=hl.flatmap(lambda i:
+                                           hl.cond(hl.is_missing(ht.row_field_name_outer[i].row_field_name),
+                                                   hl.range(0, hl.len(ht.global_field_name_outer[i].global_field_name))
+                                                   .map(lambda _: hl.null(ht.row_field_name_outer[i].row_field_name.dtype.element_type)),
+                                                   ht.row_field_name_outer[i].row_field_name),
+                                           hl.range(hl.len(ht.global_field_name_outer))))
+    ht = ht.transmute_globals(inner_global=hl.flatmap(lambda x: x.global_field_name, ht.global_field_name_outer))
+    mt = ht._unlocalize_entries('inner_row', 'inner_global', globals_for_col_key)
+    return mt
+
+
+def pull_out_fields_from_entries(mt, shared_fields, index='rows'):
+    func = mt.annotate_rows if index == 'rows' else mt.annotate_cols
+    mt = func(**{f'_{field}': hl.agg.take(mt[field], 1)[0] for field in shared_fields})
+    return mt.drop(*shared_fields).rename({f'_{field}': field for field in shared_fields})
