@@ -290,6 +290,29 @@ def get_tasks_from_pipeline(p):
     return dict(Counter(map(lambda x: x.name, p.select_tasks(""))))
 
 
+def get_logs_by_query(batch_id, query, billing_project: str = 'ukb_diverse_pops'):
+    import batch_client
+    bc = batch_client.client.BatchClient(billing_project=billing_project)
+    b = bc.get_batch(batch_id)
+    for j in b.jobs(q=query):
+        job = bc.get_job(batch_id, j['job_id'])
+        yield job.log().get('main')
+    bc.close()
+
+
+def get_failures_by_batch(batch_id, job_name: str = None):
+    query = 'failed'
+    if job_name is None:
+        query += f' name={job_name}'
+    files = set()
+    for i, log in enumerate(get_logs_by_query(batch_id, query)):
+        for line in log.split('\n'):
+            if 'error' in line.lower() or 'warning' in line.lower():
+                files.add(i)
+                print(f'{len(files)}\t{line}')
+
+
+
 def load_jobs_by_batch_ids(batch_ids, billing_project: str = 'ukb_diverse_pops'):
     import batch_client
     bc = batch_client.client.BatchClient(billing_project=billing_project)
