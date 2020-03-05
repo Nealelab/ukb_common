@@ -1,6 +1,13 @@
 from gnomad_hail import *
 
 
+def get_top_p_from_mt(mt, p):
+    top_p_hit = hl.agg.filter(hl.is_defined(p) & ~hl.is_nan(p),
+                              hl.agg.take(mt.entry.annotate(**mt.col), 1, ordering=p))
+    ht = mt.annotate_rows(top_p=hl.or_missing(hl.len(top_p_hit) > 0, top_p_hit[0])).rows()
+    return ht.transmute(**ht.top_p)
+
+
 def annotation_case_builder(worst_csq_by_gene_canonical_expr):
     return (hl.case(missing_false=True)
             .when(worst_csq_by_gene_canonical_expr.lof == 'HC', 'pLoF')
@@ -28,6 +35,9 @@ def load_variant_data(directory: str, pheno: str, coding: str, trait_type: str, 
     print(f'Loading: {directory}/*.{extension} ...')
     marker_id_col = 'markerID' if extension == 'single.txt' else 'SNPID'
     locus_alleles = ht[marker_id_col].split('_')
+    if n_cases == -1: n_cases = hl.null(hl.tint)
+    if n_controls == -1: n_controls = hl.null(hl.tint)
+
     ht = ht.key_by(locus=hl.parse_locus(locus_alleles[0]), alleles=locus_alleles[1].split('/'),
                    pheno=pheno, coding=coding, trait_type=trait_type).distinct().naive_coalesce(50)
     if marker_id_col == 'SNPID':
@@ -48,6 +58,8 @@ def load_gene_data(directory: str, pheno: str, coding: str, trait_type: str, gen
     types = {f'Nmarker_MACCate_{i}': hl.tint32 for i in range(1, 9)}
     types.update({x: hl.tfloat64 for x in ('Pvalue', 'Pvalue_Burden', 'Pvalue_SKAT', 'Pvalue_skato_NA', 'Pvalue_burden_NA', 'Pvalue_skat_NA')})
     ht = hl.import_table(f'{directory}/*.gene.txt', delimiter=' ', impute=True, types=types)
+    if n_cases == -1: n_cases = hl.null(hl.tint)
+    if n_controls == -1: n_controls = hl.null(hl.tint)
 
     fields = ht.Gene.split('_')
     gene_ht = hl.read_table(gene_ht_map_path).select('interval').distinct()
@@ -61,12 +73,13 @@ def load_gene_data(directory: str, pheno: str, coding: str, trait_type: str, gen
     mt.checkpoint(output_ht_path.replace('.ht', '.mt'), overwrite=overwrite, _read_if_exists=not overwrite)
 
 
-def get_cases_and_controls_from_log(log_prefix):
+def get_cases_and_controls_from_log(log_prefix, log_suffix = 'gene', chrom_prefix='chr'):
     cases = controls = -1
     for chrom in range(10, 23):
         try:
-            with hl.hadoop_open(f'{log_prefix}_chr{chrom}_000000001.gene.log') as f:
+            with hl.hadoop_open(f'{log_prefix}_{chrom_prefix}{chrom}_000000001.{log_suffix}.log') as f:
                 for line in f:
+                    line = line.strip()
                     if line.startswith('Analyzing'):
                         fields = line.split()
                         if len(fields) == 6:
@@ -76,6 +89,13 @@ def get_cases_and_controls_from_log(log_prefix):
                                 break
                             except ValueError:
                                 logger.warn(f'Could not load number of cases or controls from {line}.')
+                    elif line.endswith('samples were used in fitting the NULL glmm model and are found in sample file'):
+                        # This is ahead of the case/control count line ("Analyzing ...") above so this should be ok
+                        fields = line.split()
+                        try:
+                            cases = int(fields[0])
+                        except ValueError:
+                            logger.warn(f'Could not load number of cases or controls from {line}.')
             return cases, controls
         except:
             pass
