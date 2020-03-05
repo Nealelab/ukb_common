@@ -121,7 +121,8 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_t
 
 def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.Resource, trait_type: str, covariates: str,
                   plink_file_root: str, docker_image: str, sparse_grm: pipeline.pipeline.Resource = None,
-                  sparse_grm_extension: str = None, skip_model_fitting: bool = False,
+                  sparse_grm_extension: str = None, inv_normalize: bool = False, skip_model_fitting: bool = False,
+                  min_covariate_count: int = 10,
                   n_threads: int = 16, storage: str = '1500Mi', memory: str = '60G'):
     analysis_type = "variant" if sparse_grm is None else "gene"
     pheno_col = 'value'
@@ -148,12 +149,15 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
                f'--plinkFile={in_bfile} '
                f'--phenoFile={pheno_file} '
                f'--covarColList={covariates} '
+               f'--minCovariateCount={min_covariate_count} '
                f'--phenoCol={pheno_col} '
                f'--sampleIDColinphenoFile={user_id_col} '
                f'--traitType={saige_pheno_types[trait_type]} '
                f'--outputPrefix={fit_null_task.null_glmm} '
                f'--outputPrefix_varRatio={fit_null_task.null_glmm}.{analysis_type} '
                f'--skipModelFitting={str(skip_model_fitting).upper()} ')
+    if inv_normalize:
+        command += '--invNormalize=TRUE '
     if analysis_type == "gene":
         fit_null_task.declare_resource_group(sparse_sigma={sparse_sigma_extension: f'{{root}}.{sparse_sigma_extension}'})
         command += (f'--IsSparseKin=TRUE '
