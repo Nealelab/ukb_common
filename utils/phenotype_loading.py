@@ -45,7 +45,8 @@ def get_codings():
     return full_ht.repartition(10)
 
 
-def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('age', 'sex')):
+def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('age', 'sex'),
+                   pheno_function_type = hl.int):
     """
     Input Hail Table with lots of phenotype row fields, distill into
     MatrixTable with either categorical or continuous data types
@@ -57,12 +58,9 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
     :rtype: MatrixTable
     """
     if data_type == 'categorical':
-        # category_type = hl.int
-        category_type = hl.str
         filter_type = {hl.tbool}
         value_type = hl.bool
     else:
-        category_type = hl.str
         filter_type = {hl.tint, hl.tfloat}
         value_type = hl.float
 
@@ -79,10 +77,10 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
         columns=list(select_fields), entry_field_name='value', col_field_name='phesant_pheno'
     )
     return mt.key_cols_by(
-        pheno=hl.int(mt.phesant_pheno.split('_')[0]),
+        pheno=pheno_function_type(mt.phesant_pheno.split('_')[0]),
         coding=hl.case()
-            .when(hl.len(mt.phesant_pheno.split('_')) == 1, category_type(mt.phesant_pheno))
-            .when(hl.len(mt.phesant_pheno.split('_')) > 1, category_type(mt.phesant_pheno.split('_')[1]))
+            .when(hl.len(mt.phesant_pheno.split('_')) == 1, mt.phesant_pheno)
+            .when(hl.len(mt.phesant_pheno.split('_')) > 1, mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
             .or_error('A categorical was found not in the format of int_int')
     )
 
@@ -177,8 +175,8 @@ def add_coding_information(mt: hl.MatrixTable, coding_ht: hl.Table, phesant_phen
                             )
 
 
-def combine_datasets(mt_path_dict: dict, summary_tsv_path_dict: dict,
-                     pheno_description_path: str, coding_ht_path: str, data_type: str = 'categorical'):
+def combine_datasets(mt_path_dict: dict, summary_tsv_path_dict: dict = None,
+                     pheno_description_path: str = None, coding_ht_path: str = None, data_type: str = 'categorical'):
     """
     Combine "both sexes", female, and male MTs into one with multiple entry fields,
     adding phenotype descriptions and coding.
@@ -195,14 +193,15 @@ def combine_datasets(mt_path_dict: dict, summary_tsv_path_dict: dict,
     female_mt = hl.read_matrix_table(mt_path_dict['females'])
     male_mt = hl.read_matrix_table(mt_path_dict['males'])
 
-    description_ht = hl.import_table(pheno_description_path, impute=True, missing='', key='FieldID')
-    description_ht = description_ht.transmute(coding_id=description_ht.Coding)
+    if pheno_description_path is not None:
+        description_ht = hl.import_table(pheno_description_path, impute=True, missing='', key='FieldID')
+        description_ht = description_ht.transmute(coding_id=description_ht.Coding)
 
-    both_mt = both_mt.annotate_cols(**description_ht[both_mt.pheno])
-    female_mt = female_mt.annotate_cols(**description_ht[female_mt.pheno])
-    male_mt = male_mt.annotate_cols(**description_ht[male_mt.pheno])
+        both_mt = both_mt.annotate_cols(**description_ht[both_mt.pheno])
+        female_mt = female_mt.annotate_cols(**description_ht[female_mt.pheno])
+        male_mt = male_mt.annotate_cols(**description_ht[male_mt.pheno])
 
-    if data_type == 'categorical':
+    if coding_ht_path is not None and summary_tsv_path_dict is not None and data_type == 'categorical':
         coding_ht = hl.read_table(coding_ht_path)
         both_mt = add_coding_information(both_mt, coding_ht, summary_tsv_path_dict['both_sexes_no_sex_specific'])
         female_mt = add_coding_information(female_mt, coding_ht, summary_tsv_path_dict['females'])
@@ -439,6 +438,9 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(
                 hl.cond(mt.data_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
             ) for sex in sexes}, data_type=mt.data_type, meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
+        elif data_type == 'additional':
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
+                                data_type='continuous', meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
         elif 'pheno' in list(mt.col_key):
             mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
 
@@ -455,7 +457,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
         elif 'icd_code' in list(mt.col_key):
             icd_version = mt.icd_version if 'icd_version' in list(mt.col) else ''
             mt = mt.key_cols_by(pheno=mt.icd_code, coding=icd_version)
-            mt = mt.filter_cols(mt.truncated)
+            mt = mt.filter_cols(hl.len(mt.icd_code) == 3)
             mt = mt.select_cols(**compute_cases_binary(mt.any_codes, mt.sex),
                                 data_type=data_type,
                                 meaning=mt.short_meaning,

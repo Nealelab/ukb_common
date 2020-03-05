@@ -11,7 +11,9 @@ def main(args):
             log=hl.utils.timestamp_path(os.path.join(tempfile.gettempdir(), 'load_results'), suffix='.log'),
             default_reference=args.reference)
 
-    cases, controls = get_cases_and_controls_from_log(f'{args.input_dir}/result_{args.pheno}')
+    suffix = 'gene' if args.analysis_type == 'gene' else 'variant'
+    cases, controls = get_cases_and_controls_from_log(f'{args.input_dir}/result_{args.pheno}', log_suffix=suffix,
+                                                      chrom_prefix='chr' if args.reference == 'GRCh38' else '')
 
     extension = 'single.txt' if args.analysis_type == 'gene' else 'single_variant.txt'
     if args.analysis_type == 'gene':
