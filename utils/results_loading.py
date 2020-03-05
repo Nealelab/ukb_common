@@ -267,9 +267,3 @@ def mwzj_hts_by_tree(all_hts, temp_dir, globals_for_col_key, debug=False, inner_
     ht = ht.transmute_globals(inner_global=hl.flatmap(lambda x: x.global_field_name, ht.global_field_name_outer))
     mt = ht._unlocalize_entries('inner_row', 'inner_global', globals_for_col_key)
     return mt
-
-
-def pull_out_fields_from_entries(mt, shared_fields, index='rows'):
-    func = mt.annotate_rows if index == 'rows' else mt.annotate_cols
-    mt = func(**{f'_{field}': hl.agg.take(mt[field], 1)[0] for field in shared_fields})
-    return mt.drop(*shared_fields).rename({f'_{field}': field for field in shared_fields})
