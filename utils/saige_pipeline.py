@@ -93,7 +93,8 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
 
 
 def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_type: str, module: str,
-                 docker_image: str, n_threads: int = 8, storage: str = '500Mi', additional_args: str = ''):
+                 docker_image: str, proportion_single_sex: float = 0.1, n_threads: int = 8, storage: str = '500Mi',
+                 additional_args: str = ''):
     extract_task: pipeline.pipeline.Task = p.new_task(name='extract_pheno',
                                                       attributes={
                                                           'pheno': pheno,
@@ -104,7 +105,7 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_t
     python_command = f"""set -o pipefail; python3 {SCRIPT_DIR}/export_pheno.py
     --load_module {module}
     --trait_type {trait_type}
-    --pheno {shq(pheno)} --sex both_sexes
+    --pheno {shq(pheno)} --sex both_sexes --proportion_single_sex {proportion_single_sex}
     {"--additional_args " + additional_args if additional_args else ''}
     {"--coding " + coding if coding else ''}
     --output_file {extract_task.out}
