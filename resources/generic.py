@@ -1,6 +1,4 @@
 
-temp_bucket = 'gs://ukbb-temp-30day'
-
 pheno_description_raw_path = 'gs://ukbb-exome-public/pheno_meta/Data_Dictionary_Showcase.csv'
 pheno_description_path = 'gs://ukbb-exome-public/pheno_meta/Data_Dictionary_Showcase.tsv'
 coding_ht_path = 'gs://ukbb-exome-public/pheno_meta/all_codings.ht'

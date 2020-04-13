@@ -1,4 +1,5 @@
 import hail as hl
+import uuid
 
 
 def pull_out_fields_from_entries(mt, shared_fields, index='rows'):
