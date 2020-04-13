@@ -16,6 +16,10 @@ icd_codings_ht_path = get_coding_path(19, 'ht')
 icd9_codings_ht_path = get_coding_path(87, 'ht')
 
 
+def get_gene_intervals_path(reference: str = 'GRCh37'):
+    return f'{public_bucket}/misc/gene_intervals_{reference}.ht'
+
+
 PILOT_PHENOTYPES = set(map(lambda x: (x, 'irnt', 'continuous'), {'50', '699', '23104'})).union(
     set(map(lambda x: (*x, 'categorical'), {('20004', '1095'), ('20004', '1479')}))).union(
     set(map(lambda x: (x, '', 'icd'), {'K519', 'K509', 'E109', 'E119', 'J459', 'I251',
