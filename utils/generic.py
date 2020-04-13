@@ -61,3 +61,83 @@ def all_axis_join(left_mt, right_mt, row_join: str = '', col_join: str = '',
 
     return left_mt._annotate_all(row_exprs=row_data, col_exprs=col_data,
                                  entry_exprs=entry_data, global_exprs=global_data)
+
+
+def _load_gencode_gtf(gtf_file=None, reference_genome=None) -> hl.Table:
+    """
+    Get Gencode GTF (from file or reference genome)
+
+    Parameters
+    ----------
+    reference_genome : :obj:`str` or :class:`.ReferenceGenome`, optional
+       Reference genome to use (passed along to import_gtf).
+    gtf_file : :obj:`str`
+       GTF file to load. If none is provided, but `reference_genome` is one of
+       `GRCh37` or `GRCh38`, a default will be used (on Google Cloud Platform).
+
+    Returns
+    -------
+    :class:`.Table`
+    """
+    GTFS = {
+        'GRCh37': 'gs://hail-common/references/gencode/gencode.v19.annotation.gtf.bgz',
+        'GRCh38': 'gs://hail-common/references/gencode/gencode.v29.annotation.gtf.bgz',
+    }
+    if reference_genome is None:
+        reference_genome = hl.default_reference().name
+    else:
+        reference_genome = reference_genome.name
+    if gtf_file is None:
+        gtf_file = GTFS.get(reference_genome)
+        if gtf_file is None:
+            raise ValueError(
+                'get_gene_intervals requires a GTF file, or the reference genome be one of GRCh37 or GRCh38 (when on Google Cloud Platform)')
+    ht = hl.experimental.import_gtf(gtf_file, reference_genome=reference_genome,
+                                    skip_invalid_contigs=True, min_partitions=12)
+    ht = ht.annotate(gene_id=ht.gene_id.split(f'\\.')[0],
+                     transcript_id=ht.transcript_id.split('\\.')[0])
+    return ht
+
+
+def create_genome_intervals_file() -> hl.Table:
+    # Load GTF file
+    tmp_path = f'/tmp_{uuid.uuid4()}.ht'
+    ht = _load_gencode_gtf()
+    ht.filter((ht.feature == 'gene') & (ht.gene_type == 'protein_coding')).write(tmp_path, True)
+
+    # Scan to get bounds, create intervals
+    tmp_path2 = f'/tmp/tmp_{uuid.uuid4()}.ht'
+    ht = hl.read_table(tmp_path)
+    ht = ht.filter((ht.feature == 'gene') & (ht.gene_type == 'protein_coding'))
+    ht = ht.select('gene_id', 'gene_name')
+    last_locus = hl.scan.take(ht.row, 1, ordering=-ht.interval.start.global_position())
+    intergenic_region = hl.or_missing((hl.len(last_locus) > 0) &
+                                      (last_locus[0].interval.end.contig == ht.interval.start.contig),
+                                      hl.interval(last_locus[0].interval.end, ht.interval.start))
+    ht = ht.annotate(
+        last_locus=last_locus,
+        intergenic_region=intergenic_region
+    )
+    intergenic_length = ht.intergenic_region.end.position - ht.intergenic_region.start.position
+    intergenic_region = hl.or_missing(intergenic_length > 0, ht.intergenic_region)
+    intergenic_dist = hl.int((intergenic_region.end.position - intergenic_region.start.position) / 2)
+    chrom = ht.interval.start.contig
+    def interval(pos1, pos2):
+        return hl.interval(hl.locus(chrom, pos1), hl.locus(chrom, pos2))
+    ht = ht.transmute(
+        intergenic_region1=hl.or_missing(hl.is_defined(intergenic_region),
+                                         interval(intergenic_region.start.position + 1,  # gene interval is closed
+                                                  intergenic_region.start.position + intergenic_dist)),
+        intergenic_region2=hl.or_missing(hl.is_defined(intergenic_region),
+                                         interval(intergenic_region.start.position + intergenic_dist,
+                                                  intergenic_region.end.position))
+    ).key_by()
+    regions = hl.array([hl.struct(interval=ht.interval, gene_id=ht.gene_id, gene_name=ht.gene_name, within_gene=True)])
+    regions = hl.if_else(hl.is_defined(ht.intergenic_region1), regions.extend([
+        hl.struct(interval=ht.intergenic_region1, gene_id=ht.last_locus[0].gene_id, gene_name=ht.last_locus[0].gene_name, within_gene=False),
+        hl.struct(interval=ht.intergenic_region2, gene_id=ht.gene_id, gene_name=ht.gene_name, within_gene=False)
+    ]), regions)
+    ht = ht.annotate(regions=regions).explode('regions')
+    ht = ht.select(**ht.regions)
+    return ht.key_by('interval')
+
