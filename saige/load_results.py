@@ -3,6 +3,7 @@
 __author__ = 'konradk'
 
 from ukb_common import *
+import argparse
 import tempfile
 
 
@@ -15,10 +16,13 @@ def main(args):
     cases, controls = get_cases_and_controls_from_log(f'{args.input_dir}/result_{args.pheno}', log_suffix=suffix,
                                                       chrom_prefix='chr' if args.reference == 'GRCh38' else '')
 
+    quantitative_trait = args.trait_type in ('continuous', 'biomarkers')
+    heritability = get_heritability_from_log(args.null_glmm_log, quantitative_trait) if args.null_glmm_log else -1.0
+
     extension = 'single.txt' if args.analysis_type == 'gene' else 'single_variant.txt'
     if args.analysis_type == 'gene':
-        load_gene_data(args.input_dir, args.pheno, args.coding, args.trait_type, args.gene_map_ht_raw_path, cases, controls, args.overwrite)
-    load_variant_data(args.input_dir, args.pheno, args.coding, args.trait_type, args.ukb_vep_ht_path, extension, cases, controls, args.overwrite)
+        load_gene_data(args.input_dir, args.pheno, args.coding, args.trait_type, args.gene_map_ht_raw_path, cases, controls, heritability, args.overwrite)
+    load_variant_data(args.input_dir, args.pheno, args.coding, args.trait_type, args.ukb_vep_ht_path, extension, cases, controls, heritability, args.overwrite)
 
 
 if __name__ == '__main__':
@@ -28,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--pheno', help='Phenotype ID', required=True)
     parser.add_argument('--coding', help='Phenotype coding', default='')
     parser.add_argument('--trait_type', help='Trait type', required=True)
+    parser.add_argument('--null_glmm_log', help='Path to log file from null model')
     parser.add_argument('--analysis_type', help='Analysis type', choices=('gene', 'variant'), default='gene')
     parser.add_argument('--reference', help='Reference genome', default='GRCh38')
     parser.add_argument('--gene_map_ht_raw_path', help='Path to raw gene map')

@@ -33,7 +33,7 @@ def main(args):
         elif prop_female >= 1 - args.proportion_single_sex:
             print(f'{prop_female} greater than {1 - args.proportion_single_sex}. Filtering to females...')
             mt = mt.filter_rows(mt.sex == 0)
-    ht = mt.key_cols_by().entries()
+    ht = mt.key_cols_by().select_cols().entries()
     ht.export(args.output_file)
 
 
