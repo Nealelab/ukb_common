@@ -1,4 +1,5 @@
-from gnomad_hail import *
+import hail as hl
+from gnomad.utils import *
 
 
 def load_all_mfi_data():

@@ -46,7 +46,7 @@ def get_codings():
 
 
 def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('age', 'sex'),
-                   pheno_function_type = hl.int):
+                   pheno_function_type = hl.int, rekey: bool = True):
     """
     Input Hail Table with lots of phenotype row fields, distill into
     MatrixTable with either categorical or continuous data types
@@ -76,13 +76,15 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
     mt = pheno_ht.to_matrix_table_row_major(
         columns=list(select_fields), entry_field_name='value', col_field_name='phesant_pheno'
     )
-    return mt.key_cols_by(
-        pheno=pheno_function_type(mt.phesant_pheno.split('_')[0]),
-        coding=hl.case()
-            .when(hl.len(mt.phesant_pheno.split('_')) == 1, mt.phesant_pheno)
-            .when(hl.len(mt.phesant_pheno.split('_')) > 1, mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
-            .or_error('A categorical was found not in the format of int_int')
-    )
+    if rekey:
+        mt = mt.key_cols_by(
+            pheno=pheno_function_type(mt.phesant_pheno.split('_')[0]),
+            coding=hl.case()
+                .when(hl.len(mt.phesant_pheno.split('_')) == 1, mt.phesant_pheno)
+                .when(hl.len(mt.phesant_pheno.split('_')) > 1, mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
+                .or_error('A categorical was found not in the format of int_int')
+        )
+    return mt
 
 
 def get_missing_codings(ht):
@@ -418,11 +420,13 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
                                 path=mt.phecode_group)
             mt = mt.select_entries(**format_entries(mt.case_control, mt.sex))
         elif data_type == 'prescriptions':
+            def format_prescription_name(pheno):
+                return pheno.replace(',', '|').replace('/', '+').replace(' ', '')
             mt = mt.select_entries(value=hl.or_else(hl.len(mt.values) > 0, False))
             mt2 = mt.group_cols_by(
-                pheno=mt.Drug_Category_and_Indication.replace(',', '|'), coding='',Drug_Category_and_Indication=mt.Drug_Category_and_Indication,
+                pheno=format_prescription_name(mt.Drug_Category_and_Indication), coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication,
             ).aggregate(value=hl.agg.any(mt.value))
-            mt = mt.key_cols_by(pheno=mt.Generic_Name.replace(',', '|'), coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication).select_cols()
+            mt = mt.key_cols_by(pheno=format_prescription_name(mt.Generic_Name), coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication).select_cols()
             mt = mt.union_cols(mt2).key_cols_by('pheno', 'coding')
             mt = mt.select_cols(**compute_cases_binary(mt.value, mt.sex),
                                 data_type=data_type, meaning=mt.pheno,

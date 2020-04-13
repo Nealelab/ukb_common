@@ -1,11 +1,20 @@
-from gnomad_hail import *
+import hail as hl
+from gnomad.utils import *
 
 
-def get_top_p_from_mt(mt, p):
+def format_pheno_dir(pheno):
+    return pheno.replace("/", "_")
+
+
+def get_top_p_from_mt(mt, p, return_ht = True):
     top_p_hit = hl.agg.filter(hl.is_defined(p) & ~hl.is_nan(p),
                               hl.agg.take(mt.entry.annotate(**mt.col), 1, ordering=p))
-    ht = mt.annotate_rows(top_p=hl.or_missing(hl.len(top_p_hit) > 0, top_p_hit[0])).rows()
-    return ht.transmute(**ht.top_p)
+    mt = mt.annotate_rows(top_p=hl.or_missing(hl.len(top_p_hit) > 0, top_p_hit[0]))
+    if return_ht:
+        ht = mt.rows()
+        return ht.transmute(**ht.top_p)
+    else:
+        return mt
 
 
 def annotation_case_builder(worst_csq_by_gene_canonical_expr):
@@ -29,7 +38,7 @@ def get_vep_formatted_data(ukb_vep_path: str):
 
 
 def load_variant_data(directory: str, pheno: str, coding: str, trait_type: str, ukb_vep_path: str, extension: str = 'single.txt',
-                      n_cases: int = -1, n_controls: int = -1, overwrite: bool = False):
+                      n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0, overwrite: bool = False):
     output_ht_path = f'{directory}/variant_results.ht'
     ht = hl.import_table(f'{directory}/*.{extension}', delimiter=' ', impute=True)
     print(f'Loading: {directory}/*.{extension} ...')
@@ -37,22 +46,25 @@ def load_variant_data(directory: str, pheno: str, coding: str, trait_type: str, 
     locus_alleles = ht[marker_id_col].split('_')
     if n_cases == -1: n_cases = hl.null(hl.tint)
     if n_controls == -1: n_controls = hl.null(hl.tint)
+    if heritability == -1.0: heritability = hl.null(hl.tfloat)
 
     ht = ht.key_by(locus=hl.parse_locus(locus_alleles[0]), alleles=locus_alleles[1].split('/'),
                    pheno=pheno, coding=coding, trait_type=trait_type).distinct().naive_coalesce(50)
     if marker_id_col == 'SNPID':
         ht = ht.drop('CHR', 'POS', 'rsid', 'Allele1', 'Allele2')
-    ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(n_cases=n_cases, n_controls=n_controls)
+    ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability)
     ht = ht.annotate(**get_vep_formatted_data(ukb_vep_path)[
         hl.struct(locus=ht.locus, alleles=ht.alleles)])  # TODO: fix this for variants that overlap multiple genes
-    ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls')
+    ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls', 'heritability')
     mt = ht.to_matrix_table(['locus', 'alleles'], ['pheno', 'coding', 'trait_type'],
-                            [marker_id_col, 'gene', 'annotation'], []).annotate_cols(n_cases=n_cases, n_controls=n_controls)
+                            [marker_id_col, 'gene', 'annotation'], []).annotate_cols(
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability)
     mt.checkpoint(output_ht_path.replace('.ht', '.mt'), overwrite=overwrite, _read_if_exists=not overwrite)
 
 
 def load_gene_data(directory: str, pheno: str, coding: str, trait_type: str, gene_ht_map_path: str,
-                   n_cases: int = -1, n_controls: int = -1, overwrite: bool = False):
+                   n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0, overwrite: bool = False):
     output_ht_path = f'{directory}/gene_results.ht'
     print(f'Loading: {directory}/*.gene.txt ...')
     types = {f'Nmarker_MACCate_{i}': hl.tint32 for i in range(1, 9)}
@@ -60,16 +72,19 @@ def load_gene_data(directory: str, pheno: str, coding: str, trait_type: str, gen
     ht = hl.import_table(f'{directory}/*.gene.txt', delimiter=' ', impute=True, types=types)
     if n_cases == -1: n_cases = hl.null(hl.tint)
     if n_controls == -1: n_controls = hl.null(hl.tint)
+    if heritability == -1.0: heritability = hl.null(hl.tfloat)
 
     fields = ht.Gene.split('_')
     gene_ht = hl.read_table(gene_ht_map_path).select('interval').distinct()
     ht = ht.key_by(gene_id=fields[0], gene_symbol=fields[1], annotation=fields[2],
-                   pheno=pheno, coding=coding, trait_type=trait_type).drop('Gene').naive_coalesce(10).annotate_globals(n_cases=n_cases, n_controls=n_controls)
+                   pheno=pheno, coding=coding, trait_type=trait_type).drop('Gene').naive_coalesce(10).annotate_globals(
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability)
     ht = ht.annotate(total_variants=hl.sum([v for k, v in list(ht.row_value.items()) if 'Nmarker' in k]),
                      interval=gene_ht.key_by('gene_id')[ht.gene_id].interval)
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls')
     mt = ht.to_matrix_table(['gene_symbol', 'gene_id', 'annotation', 'interval'],
-                            ['pheno', 'coding', 'trait_type'], [], []).annotate_cols(n_cases=n_cases, n_controls=n_controls)
+                            ['pheno', 'coding', 'trait_type'], [], []).annotate_cols(
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability)
     mt.checkpoint(output_ht_path.replace('.ht', '.mt'), overwrite=overwrite, _read_if_exists=not overwrite)
 
 
@@ -89,7 +104,8 @@ def get_cases_and_controls_from_log(log_prefix, log_suffix = 'gene', chrom_prefi
                                 break
                             except ValueError:
                                 logger.warn(f'Could not load number of cases or controls from {line}.')
-                    elif line.endswith('samples were used in fitting the NULL glmm model and are found in sample file'):
+                    elif line.endswith('samples were used in fitting the NULL glmm model and are found in sample file') or \
+                            line.endswith('samples have been used to fit the glmm null model'):
                         # This is ahead of the case/control count line ("Analyzing ...") above so this should be ok
                         fields = line.split()
                         try:
@@ -100,6 +116,58 @@ def get_cases_and_controls_from_log(log_prefix, log_suffix = 'gene', chrom_prefi
         except:
             pass
     return cases, controls
+
+
+def get_heritability_from_log(log_file, quantitative_trait: bool = False):
+    import math
+    heritability = -1
+    with hl.hadoop_open(log_file) as f:
+        for line in f:
+            if line.startswith('Final'):
+                fields = line.strip().split()
+                if len(fields) == 4:
+                    try:
+                        tau = float(fields[2])
+                        if quantitative_trait:
+                            tau1 = float(fields[1])
+                            heritability = tau / (tau1 + tau)
+                        else:
+                            heritability = tau / (tau + math.pi ** 2 / 3)
+                        break
+                    except:
+                        logger.warn(f'Could not load heritability from {line}.')
+    return heritability
+
+
+def get_saige_timing_grep(all_files):
+    try:
+        grep_results = hl.grep('Analysis took', all_files, max_count=int(1e8), show=False)
+    except hl.utils.java.FatalError:
+        return
+    if sum([len(x) for x in grep_results.values()]) > 5e7:
+        logger.warning(f'Got more than 5e7 values in {all_files[0]}, etc. Check this!')
+    for log, result in grep_results.items():
+        try:
+            timing = float(result[0].split()[2])
+        except:
+            logger.warning(f'Could not load timing from {result} in {log}.')
+            continue
+        chrom, pos = log.rsplit('.', 2)[0].rsplit('_', 2)[1:3]
+        yield f'{chrom}:{pos}', timing
+
+
+def get_null_model_timing(null_glmm_log):
+    cpu = wall = 'NA'
+    with hl.hadoop_open(null_glmm_log) as f:
+        for line in f:
+            if line.startswith('t_end - t_begin'):
+                try:
+                    f.readline()
+                    line2 = f.readline()
+                    cpu, _, wall = line2.strip().split()
+                except:
+                    logger.warning(f'Could not load null model timings from {line2} in {null_glmm_log}.')
+    return cpu, wall
 
 
 def union_mts_by_tree(all_mts, temp_dir, debug=False):
