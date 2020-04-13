@@ -3,10 +3,12 @@
 __author__ = 'konradk'
 
 import argparse
-from gnomad_hail import *
+from pprint import pprint
+from gnomad.utils import *
 from ukb_common import *
 
 threshold: float = 1e-6
+gwas_sig_threshold = 5e-8
 
 
 def main(args):

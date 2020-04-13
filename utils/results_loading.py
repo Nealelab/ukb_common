@@ -258,6 +258,8 @@ def unify_saige_ht_schema(ht):
         ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
                        'p.value.NA', 'Is.SPA.converge', 'varT', 'varTstar', 'AF.Cases',
                        'AF.Controls', 'Pvalue', gene=hl.or_else(ht.gene, ''), annotation=hl.or_else(ht.annotation, ''))
+    if 'heritability' in list(ht.globals):
+        ht = ht.drop('heritability')
     return ht
 
 
@@ -272,7 +274,7 @@ def unify_saige_ht_variant_schema(ht):
                        **{field: ht[field] for field in shared_end})
     else:
         ht = ht.select(*shared, *new_floats, *new_ints, *shared_end)
-    return ht.annotate(SE=hl.float64(ht.SE))
+    return ht.annotate(SE=hl.float64(ht.SE), AC=hl.int32(ht.AC))
 
 
 def unify_saige_burden_ht_schema(ht):
