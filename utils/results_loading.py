@@ -129,11 +129,14 @@ def load_gene_data(directory: str, pheno_key_dict, gene_ht_map_path: str,
     # mt.checkpoint(output_ht_path.replace('.ht', '.mt'), overwrite=overwrite, _read_if_exists=not overwrite)
 
 
-def get_cases_and_controls_from_log(log_prefix, log_suffix = 'gene', chrom_prefix='chr'):
+def get_cases_and_controls_from_log(log_format):
+    """
+    'gs://path/to/result_chr{chrom}_000000001.variant.log'
+    """
     cases = controls = -1
     for chrom in range(10, 23):
         try:
-            with hl.hadoop_open(f'{log_prefix}_{chrom_prefix}{chrom}_000000001.{log_suffix}.log') as f:
+            with hl.hadoop_open(log_format.format(chrom=chrom)) as f:
                 for line in f:
                     line = line.strip()
                     if line.startswith('Analyzing'):
@@ -178,6 +181,20 @@ def get_heritability_from_log(log_file, quantitative_trait: bool = False):
                     except:
                         logger.warn(f'Could not load heritability from {line}.')
     return heritability
+
+
+def get_saige_version_from_log(null_glmm_log):
+    version = 'NA'
+    with hl.hadoop_open(null_glmm_log) as f:
+        for line in f:
+            if line.startswith('other attached packages:'):
+                try:
+                    line2 = f.readline()
+                    packages = line2.strip().split()
+                    version = [x for x in packages if 'SAIGE' in x][0]
+                except:
+                    logger.warning(f'Could not load version number from {line2} in {null_glmm_log}.')
+    return version
 
 
 def get_saige_timing_grep(all_files):
