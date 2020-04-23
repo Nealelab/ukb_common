@@ -37,12 +37,12 @@ def get_top_p_path(data_format: str = 'ht', reference: str = 'GRCh37'):
 
 
 def check_trait_types(trait_type):
-    _TRAIT_TYPES = ('icd', 'continuous', 'categorical')
+    _TRAIT_TYPES = ('icd', 'continuous', 'categorical', 'all')
     if trait_type not in _TRAIT_TYPES:
         raise ValueError(f'{trait_type} not in {_TRAIT_TYPES}')
 
 
 def check_timing_type(timing_type):
-    _TIMING_TYPES = ('saige', 'null_model')
+    _TIMING_TYPES = ('saige', 'null_model', 'full')
     if timing_type not in _TIMING_TYPES:
         raise ValueError(f'{timing_type} not in {_TIMING_TYPES}')
