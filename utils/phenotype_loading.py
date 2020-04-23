@@ -395,7 +395,8 @@ def combine_pheno_files(pheno_file_dict: dict):
         full_mt.value))
 
 
-def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
+def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, truncated_codes_only: bool = True,
+                                  custom_data_categorical: bool = True):
     full_mt: hl.MatrixTable = None
     sexes = ('both_sexes', 'females', 'males')
 
@@ -416,69 +417,87 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table):
         mt = mt.select_rows(**cov_ht[mt.row_key])
         print(data_type)
         if data_type == 'phecode':
-            mt = mt.key_cols_by(pheno=mt.phecode, coding=mt.phecode_sex)
-            mt = mt.annotate_cols(n_cases=hl.agg.count_where(mt.case_control))
+            mt = mt.key_cols_by(trait_type=data_type, phenocode=mt.phecode, pheno_sex=mt.phecode_sex, coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
             mt = mt.select_cols(**compute_cases_binary(mt.case_control, mt.sex),
-                                data_type=data_type, meaning=mt.phecode_description,
-                                path=mt.phecode_group)
+                                description=mt.phecode_description, description_more=NULL_STR, coding_description=NULL_STR, category=mt.phecode_group)
             mt = mt.select_entries(**format_entries(mt.case_control, mt.sex))
         elif data_type == 'prescriptions':
             def format_prescription_name(pheno):
-                return pheno.replace(',', '|').replace('/', '+').replace(' ', '')
+                return pheno.replace(',', '|').replace('/', '_')
             mt = mt.select_entries(value=hl.or_else(hl.len(mt.values) > 0, False))
             mt2 = mt.group_cols_by(
-                pheno=format_prescription_name(mt.Drug_Category_and_Indication), coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication,
-            ).aggregate(value=hl.agg.any(mt.value))
-            mt = mt.key_cols_by(pheno=format_prescription_name(mt.Generic_Name), coding='', Drug_Category_and_Indication=mt.Drug_Category_and_Indication).select_cols()
-            mt = mt.union_cols(mt2).key_cols_by('pheno', 'coding')
+                trait_type=data_type,
+                phenocode=format_prescription_name(mt.Drug_Category_and_Indication),
+                pheno_sex='both_sexes',
+                coding=NULL_STR_KEY, modifier=NULL_STR_KEY,
+            ).aggregate(value=hl.agg.any(mt.value)).select_cols(category=NULL_STR)
+            mt = mt.key_cols_by(
+                trait_type=data_type,
+                phenocode=format_prescription_name(mt.Generic_Name),
+                pheno_sex='both_sexes',
+                coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+            mt = mt.select_cols(category=mt.Drug_Category_and_Indication)
+            mt = mt.union_cols(mt2)
             mt = mt.select_cols(**compute_cases_binary(mt.value, mt.sex),
-                                data_type=data_type, meaning=mt.pheno,
-                                path=mt.Drug_Category_and_Indication)
+                                description=NULL_STR, description_more=NULL_STR, coding_description=NULL_STR, category=mt.category)
             mt = mt.select_entries(**format_entries(mt.value, mt.sex))
-        elif data_type == 'biomarkers':
-            mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
-            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
-            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
-                                data_type=data_type, meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
         elif data_type == 'custom':
             mt = mt.select_entries(**format_entries(mt.value, mt.sex))
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(
-                hl.cond(mt.data_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
-            ) for sex in sexes}, data_type=mt.data_type, meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
+                hl.cond(mt.trait_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
+            ) for sex in sexes}, description=NULL_STR, description_more=NULL_STR, coding_description=NULL_STR, category=mt.category)
         elif data_type == 'additional':
+            mt = mt.key_cols_by(trait_type='continuous', phenocode=mt.pheno, pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=mt.coding)
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
-                                data_type='continuous', meaning=hl.null(hl.tstr), path=hl.null(hl.tstr))
-        elif 'pheno' in list(mt.col_key):
-            mt = mt.key_cols_by(pheno=hl.str(mt.pheno), coding=mt.coding)
+                                description=hl.coalesce(*[mt[f'{sex}_pheno'].meaning for sex in sexes]),
+                                description_more=hl.coalesce(*[mt[f'{sex}_pheno'].description for sex in sexes]),
+                                coding_description=NULL_STR, category=NULL_STR)
+        elif data_type in ('categorical', 'continuous'):
+            mt = mt.key_cols_by(trait_type=data_type, phenocode=hl.str(mt.pheno), pheno_sex='both_sexes',
+                                coding=mt.coding if data_type == 'categorical' else NULL_STR_KEY,
+                                modifier=NULL_STR_KEY if data_type == 'categorical' else mt.coding)
 
             def check_func(x):
                 return x if data_type == 'categorical' else hl.is_defined(x)
-            meaning_field = 'meaning' if data_type == 'categorical' else 'Field'
-            path_field = 'Field' if data_type == 'categorical' else 'Path'
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(check_func(mt[sex])) for sex in sexes},
-                                data_type=data_type,
-                                meaning=hl.coalesce(*[mt[f'{sex}_pheno'][meaning_field] for sex in sexes]),
-                                path=hl.coalesce(*[mt[f'{sex}_pheno'][path_field] for sex in sexes]))
+                                description=hl.coalesce(*[mt[f'{sex}_pheno'].Field for sex in sexes]),
+                                description_more=hl.coalesce(*[mt[f'{sex}_pheno'].Notes for sex in sexes]),
+                                coding_description=hl.coalesce(*[mt[f'{sex}_pheno'].meaning for sex in sexes]) if
+                                data_type == 'categorical' else NULL_STR,
+                                category=hl.coalesce(*[mt[f'{sex}_pheno'].Path for sex in sexes]))
             mt = mt.select_entries(**{sex: hl.float64(mt[sex]) for sex in sexes})
 
         elif 'icd_code' in list(mt.col_key):
             icd_version = mt.icd_version if 'icd_version' in list(mt.col) else ''
-            mt = mt.key_cols_by(pheno=mt.icd_code, coding=icd_version)
-            mt = mt.filter_cols(hl.len(mt.icd_code) == 3)
+            mt = mt.key_cols_by(trait_type=icd_version, phenocode=mt.icd_code, pheno_sex='both_sexes',
+                                coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+            if truncated_codes_only:
+                criteria = hl.len(mt.icd_code) == 3
+                if 'truncated' in list(mt.col_value): criteria &= mt.truncated
+                mt = mt.filter_cols(criteria)
             mt = mt.select_cols(**compute_cases_binary(mt.any_codes, mt.sex),
-                                data_type=data_type,
-                                meaning=mt.short_meaning,
-                                path=mt.meaning)
+                                description=mt.short_meaning,
+                                description_more=NULL_STR,
+                                coding_description=NULL_STR,
+                                category=mt.meaning)
             mt = mt.select_entries(**format_entries(mt.any_codes, mt.sex))
-        else:
-            raise ValueError('pheno or icd_code not in column key. New data type?')
+        else: # elif data_type == 'biomarkers':
+            mt = mt.key_cols_by(trait_type=mt.trait_type if 'trait_type' in list(mt.col) else data_type,
+                                phenocode=hl.str(mt.pheno), pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
+                                description=mt.Field, description_more=NULL_STR, coding_description=NULL_STR, category=mt.Path)
+        # else:
+        #     raise ValueError('pheno or icd_code not in column key. New data type?')
 
         if full_mt is None:
             full_mt = mt
         else:
             full_mt = full_mt.union_cols(mt, row_join_type='outer' if data_type == 'prescriptions' else 'inner')
     full_mt = full_mt.unfilter_entries()
+
+    # Here because prescription data was smaller than the others (so need to set the missing samples to 0)
     return full_mt.select_entries(**{sex: hl.cond(
-        full_mt.data_type == 'prescriptions',
+        full_mt.trait_type == 'prescriptions',
         hl.or_else(full_mt[sex], hl.float64(0.0)),
         full_mt[sex]) for sex in sexes})
