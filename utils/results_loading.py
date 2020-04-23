@@ -305,7 +305,14 @@ def join_pheno_hts_to_mt(all_hts, row_keys, col_keys, pheno_dict, temp_dir, inne
     return mt
 
 
-def unify_saige_ht_schema(ht):
+def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
+    """
+
+    :param Table ht:
+    :param str patch_case_control_count: Path to file (hack to get cases and controls back if loading later)
+    :return:
+    :rtype: Table
+    """
     if 'AF.Cases' not in list(ht.row):
         ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
                        **{'p.value.NA': hl.null(hl.tfloat64), 'Is.SPA.converge': hl.null(hl.tint32),
@@ -318,6 +325,18 @@ def unify_saige_ht_schema(ht):
                        'AF.Controls', 'Pvalue', gene=hl.or_else(ht.gene, ''), annotation=hl.or_else(ht.annotation, ''))
     if 'heritability' in list(ht.globals):
         ht = ht.drop('heritability')
+
+    if patch_case_control_count:
+        if not ht.n_cases.collect()[0]:
+            directory, tpc, _ = patch_case_control_count.rsplit('/', 2)
+            trait_type, pc = tpc.split('-', 1)
+            pheno, coding = pc.rsplit('-', 1)
+            cases, controls = get_cases_and_controls_from_log(f'{directory}/{tpc}/result_{pheno}',
+                                                              log_suffix='variant', chrom_prefix='')
+            print(f'Patched pheno: {pheno}. Got {cases} cases and {controls} controls.')
+            if cases == -1: cases = hl.null(hl.tint)
+            if controls == -1: controls = hl.null(hl.tint)
+            ht = ht.annotate_globals(n_cases=cases, n_controls=controls)
     return ht
 
 
