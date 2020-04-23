@@ -4,6 +4,9 @@ import os
 import tempfile
 import hail as hl
 
+NULL_STR_KEY = ''
+NULL_STR = hl.null(hl.tstr)
+
 
 def pre_process_data_dictionary(pheno_description_raw_path, pheno_description_path):
     """
