@@ -1,11 +1,15 @@
-from hailtop import pipeline
-from hailtop.pipeline.pipeline import *
+import batch as hb
+from batch.batch import *
 from collections import Counter
 from shlex import quote as shq
+import copy
+
+PHENO_KEY_FIELDS = ('trait_type', 'phenocode', 'pheno_sex', 'coding', 'modifier')
 
 
 MKL_OFF = 'export MKL_NUM_THREADS=1; export MKL_DYNAMIC=false; export OMP_NUM_THREADS=1; export OMP_DYNAMIC=false; '
 SCRIPT_DIR = '/ukb_common/saige'
+# TODO: add binary_trait annotation to input table and remove this:
 saige_pheno_types = {
     'continuous': 'quantitative',
     'biomarkers': 'quantitative',
@@ -17,12 +21,12 @@ saige_pheno_types = {
 }
 
 
-def create_sparse_grm(p: Pipeline, output_path: str, plink_file_root: str, docker_image: str,
+def create_sparse_grm(p: Batch, output_path: str, plink_file_root: str, docker_image: str,
                       relatedness_cutoff: str = '0.125', num_markers: int = 2000,
                       n_threads: int = 8, storage = '1500Mi'):
     in_bfile = p.read_input_group(
         **{ext: f'{plink_file_root}.{ext}' for ext in ('bed', 'bim', 'fam')})
-    create_sparse_grm_task: pipeline.pipeline.Task = p.new_task(name='create_sparse_grm')
+    create_sparse_grm_task: Job = p.new_job(name='create_sparse_grm')
     create_sparse_grm_task.cpu(n_threads).storage(storage).image(docker_image)
     create_sparse_grm_task.declare_resource_group(
         sparse_grm={ext: f'{{root}}{ext}' for ext in
@@ -40,7 +44,7 @@ def create_sparse_grm(p: Pipeline, output_path: str, plink_file_root: str, docke
     return create_sparse_grm_task.sparse_grm
 
 
-def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module: str = 'ukb_exomes',
+def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: str = 'ukb_exomes',
                         gene: str = None, interval: str = None, groups=None, gene_map_ht_path: str = None,
                         set_missing_to_hom_ref: bool = False, callrate_filter: float = 0.0, adj: bool = True,
                         export_bgen: bool = True, input_dosage: bool = False, reference: str = 'GRCh38',
@@ -48,10 +52,10 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     if groups is None:
         # groups = {'pLoF', 'missense|LC', 'pLoF|missense|LC', 'synonymous'}
         groups = {'pLoF', 'missense|LC', 'synonymous'}
-    extract_task: pipeline.pipeline.Task = p.new_task(name='extract_vcf',
-                                                      attributes={
-                                                          'interval': interval
-                                                      })
+    extract_task: Job = p.new_job(name='extract_vcf',
+                                  attributes={
+                                      'interval': interval
+                                  })
     extract_task.image(docker_image).cpu(n_threads).storage(storage)
     if export_bgen:
         extract_task.declare_resource_group(out={'bgen': '{root}.bgen',
@@ -92,22 +96,17 @@ def extract_vcf_from_mt(p: Pipeline, output_root: str, docker_image: str, module
     return extract_task
 
 
-def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_type: str, module: str,
+def export_pheno(p: Batch, output_path: str, pheno_keys, module: str,
                  docker_image: str, proportion_single_sex: float = 0.1, n_threads: int = 8, storage: str = '500Mi',
                  additional_args: str = ''):
-    extract_task: pipeline.pipeline.Task = p.new_task(name='extract_pheno',
-                                                      attributes={
-                                                          'pheno': pheno,
-                                                          'coding': coding,
-                                                          'trait_type': trait_type
-                                                      })
+    extract_task: Job = p.new_job(name='extract_pheno', attributes=copy.deepcopy(pheno_keys))
     extract_task.image(docker_image).cpu(n_threads).storage(storage)
+    pheno_dict_opts = ' '.join([f"--{k} {shq(v)}" for k, v in pheno_keys.items()])
     python_command = f"""set -o pipefail; python3 {SCRIPT_DIR}/export_pheno.py
     --load_module {module}
-    --trait_type {trait_type}
-    --pheno {shq(pheno)} --sex both_sexes --proportion_single_sex {proportion_single_sex}
+    {pheno_dict_opts} {"--binary_trait" if saige_pheno_types.get(pheno_keys['trait_type']) != 'quantitative' else ""}
+    --proportion_single_sex {proportion_single_sex}
     {"--additional_args " + additional_args if additional_args else ''}
-    {"--coding " + coding if coding else ''}
     --output_file {extract_task.out}
     --n_threads {n_threads} | tee {extract_task.stdout}
     ; """.replace('\n', ' ')
@@ -119,8 +118,8 @@ def export_pheno(p: Pipeline, output_path: str, pheno: str, coding: str, trait_t
     return extract_task
 
 
-def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.Resource, trait_type: str, covariates: str,
-                  plink_file_root: str, docker_image: str, sparse_grm: pipeline.pipeline.Resource = None,
+def fit_null_glmm(p: Batch, output_root: str, pheno_file: Resource, trait_type: str, covariates: str,
+                  plink_file_root: str, docker_image: str, sparse_grm: Resource = None,
                   sparse_grm_extension: str = None, inv_normalize: bool = False, skip_model_fitting: bool = False,
                   min_covariate_count: int = 10,
                   n_threads: int = 16, storage: str = '1500Mi', memory: str = '60G'):
@@ -128,11 +127,11 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
     pheno_col = 'value'
     user_id_col = 'userId'
     in_bfile = p.read_input_group(**{ext: f'{plink_file_root}.{ext}' for ext in ('bed', 'bim', 'fam')})
-    fit_null_task = p.new_task(name=f'fit_null_model',
-                               attributes={
-                                   'analysis_type': analysis_type,
-                                   'trait_type': trait_type
-                               }).cpu(n_threads).storage(storage).image(docker_image).memory(memory)
+    fit_null_task = p.new_job(name=f'fit_null_model',
+                              attributes={
+                                  'analysis_type': analysis_type,
+                                  'trait_type': trait_type
+                              }).cpu(n_threads).storage(storage).image(docker_image).memory(memory)
     output_files = {ext: f'{{root}}{ext if ext.startswith("_") else "." + ext}' for ext in
                    ('rda', '_30markers.SAIGE.results.txt', f'{analysis_type}.varianceRatio.txt')}
     if analysis_type == 'gene':
@@ -173,8 +172,8 @@ def fit_null_glmm(p: Pipeline, output_root: str, pheno_file: pipeline.pipeline.R
     return fit_null_task
 
 
-def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_file: str,
-              vcf_file: pipeline.pipeline.ResourceGroup, samples_file: pipeline.pipeline.ResourceGroup,
+def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: str,
+              vcf_file: ResourceGroup, samples_file: ResourceGroup,
               docker_image: str,
               group_file: str = None, sparse_sigma_file: str = None, use_bgen: bool = True,
               trait_type: str = 'continuous',
@@ -182,10 +181,10 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
               memory: str = '', storage: str = '500Mi'):
 
     analysis_type = "gene" if sparse_sigma_file is not None else "variant"
-    run_saige_task: pipeline.pipeline.Task = p.new_task(name=f'run_saige',
-                                                        attributes={
-                                                            'analysis_type': analysis_type
-                                                        }).cpu(1).storage(storage).image(docker_image)  # Step 2 is single-threaded only
+    run_saige_task: Job = p.new_job(name=f'run_saige',
+                                    attributes={
+                                        'analysis_type': analysis_type
+                                    }).cpu(1).storage(storage).image(docker_image)  # Step 2 is single-threaded only
 
     if analysis_type == 'gene':
         run_saige_task.declare_resource_group(result={'gene.txt': '{root}',
@@ -231,23 +230,19 @@ def run_saige(p: Pipeline, output_root: str, model_file: str, variance_ratio_fil
     return run_saige_task
 
 
-def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: str, trait_type: str, tasks_to_hold,
+def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold,
                            vep_path: str, docker_image: str, gene_map_path: str = None, null_glmm_log: str = '',
-                           reference: str = 'GRCh38', analysis_type: str = 'gene', n_threads: int = 8, storage: str = '500Mi'):
-
-    load_data_task: pipeline.pipeline.Task = p.new_task(name=f'load_data',
-                                                        attributes={
-                                                            'pheno': pheno,
-                                                            'coding': coding,
-                                                            'trait_type': trait_type
-                                                        }).image(docker_image).cpu(n_threads).storage(storage)
+                           reference: str = 'GRCh38', saige_log: str = '', analysis_type: str = 'gene',
+                           n_threads: int = 8, storage: str = '500Mi'):
+    load_data_task: Job = p.new_job(name=f'load_data', attributes=copy.deepcopy(pheno_keys)
+                                    ).image(docker_image).cpu(n_threads).storage(storage)
     load_data_task.always_run().depends_on(*tasks_to_hold)
+    pheno_dict_opts = ' '.join([f"--{k} {shq(v)}" for k, v in pheno_keys.items()])
     python_command = f"""python3 {SCRIPT_DIR}/load_results.py
     --input_dir {shq(output_root)}
     {"--null_glmm_log " + shq(null_glmm_log) if null_glmm_log else ''}
-    --pheno {shq(pheno)}
-    {"--coding " + coding if coding else ''}
-    --trait_type {trait_type}
+    --saige_run_log_format {saige_log}
+    {pheno_dict_opts}
     {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
     --ukb_vep_ht_path {vep_path}
     --overwrite --reference {reference}
@@ -258,14 +253,14 @@ def load_results_into_hail(p: Pipeline, output_root: str, pheno: str, coding: st
     python_command = python_command.replace('\n', '; ').strip()
     command = f'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell" ' + python_command
     load_data_task.command(command)
-    p.write_output(load_data_task.stdout, f'{output_root}/{pheno}_loading.log')
+    p.write_output(load_data_task.stdout, f'{output_root}/{pheno_keys["phenocode"]}_loading.log')
     return load_data_task
 
 
-def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_image: str, R_docker_image: str,
+def qq_plot_results(p: Batch, output_root: str, tasks_to_hold, export_docker_image: str, R_docker_image: str,
                     n_threads: int = 8, storage: str = '500Mi'):
 
-    qq_export_task: pipeline.pipeline.Task = p.new_task(name='qq_export').image(export_docker_image).cpu(n_threads).storage(storage)
+    qq_export_task: Job = p.new_job(name='qq_export').image(export_docker_image).cpu(n_threads).storage(storage)
     qq_export_task.always_run().depends_on(*tasks_to_hold)
 
     python_command = f"""python3 {SCRIPT_DIR}/export_results_for_qq.py
@@ -277,7 +272,7 @@ def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_
     command = f'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell" ' + python_command
     qq_export_task.command(command)
 
-    qq_task: pipeline.pipeline.Task = p.new_task(name='qq_plot').image(R_docker_image).cpu(n_threads).storage(storage).always_run()
+    qq_task: Job = p.new_job(name='qq_plot').image(R_docker_image).cpu(n_threads).storage(storage).always_run()
     qq_task.declare_resource_group(result={ext: f'{{root}}_Pvalue_{ext}'
                                            for ext in ('qqplot.png', 'manhattan.png', 'manhattan_loglog.png', 'qquantiles.txt')})
     R_command = f"/saige-pipelines/scripts/qqplot.R -f {qq_export_task.out} -o {qq_task.result} -p Pvalue; "
@@ -288,7 +283,7 @@ def qq_plot_results(p: Pipeline, output_root: str, tasks_to_hold, export_docker_
 
 
 def get_tasks_from_pipeline(p):
-    return dict(Counter(map(lambda x: x.name, p.select_tasks(""))))
+    return dict(Counter(map(lambda x: x.name, p.select_jobs(""))))
 
 
 def get_logs_by_query(batch_id, query, billing_project: str = 'ukb_diverse_pops'):
