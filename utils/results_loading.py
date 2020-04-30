@@ -341,14 +341,17 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
     if 'saige_version' in list(ht.globals):
         ht = ht.drop('saige_version')
 
+    ht2 = ht.head(1)
+    pheno_key_dict = dict(ht2.aggregate(hl.agg.take(ht2.key, 1)[0]))
     if patch_case_control_count:
         if not ht.n_cases.collect()[0]:
             directory, tpc, _ = patch_case_control_count.rsplit('/', 2)
-            trait_type, pc = tpc.split('-', 1)
-            pheno, coding = pc.rsplit('-', 1)
-            cases, controls = get_cases_and_controls_from_log(f'{directory}/{tpc}/result_{pheno}',
-                                                              log_suffix='variant', chrom_prefix='')
-            print(f'Patched pheno: {pheno}. Got {cases} cases and {controls} controls.')
+
+            pheno_results_dir = get_pheno_output_path(directory, pheno_key_dict, '', legacy=True)
+            prefix = get_results_prefix(pheno_results_dir, pheno_key_dict, '{chrom}', 1, legacy=True)
+            saige_log = f'{prefix}.variant.log'
+            cases, controls = get_cases_and_controls_from_log(saige_log)
+            print(f'Patched pheno: {tpc}. Got {cases} cases and {controls} controls.')
             if cases == -1: cases = hl.null(hl.tint)
             if controls == -1: controls = hl.null(hl.tint)
             ht = ht.annotate_globals(n_cases=cases, n_controls=controls)
