@@ -8,7 +8,7 @@ def pull_out_fields_from_entries(mt, shared_fields, index='rows'):
     return mt.drop(*shared_fields).rename({f'_{field}': field for field in shared_fields})
 
 
-def create_broadcast_dict(key, value):
+def create_broadcast_dict(key, value = None):
     """
     Create broadcast join (local dictionary from key -> value)
     from a Hail Table.
@@ -19,6 +19,8 @@ def create_broadcast_dict(key, value):
     :rtype: DictExpression
     """
     ht = key._indices.source
+    if value is None:
+        value = ht.row_value
     return hl.dict(ht.aggregate(hl.agg.collect((key, value)), _localize=False))
 
 
