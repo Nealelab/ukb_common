@@ -473,12 +473,16 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
             mt = mt.key_cols_by(trait_type=icd_version, phenocode=mt.icd_code, pheno_sex='both_sexes',
                                 coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
             if truncated_codes_only:
-                criteria = hl.len(mt.icd_code) == 3
-                if 'truncated' in list(mt.col_value): criteria &= mt.truncated
-                mt = mt.filter_cols(criteria)
+                mt = mt.filter_cols(hl.len(mt.icd_code) == 3)
+                mt = mt.collect_cols_by_key()
+                mt = mt.annotate_cols(keep=hl.if_else(
+                    hl.len(mt.truncated) == 1, 0,
+                    hl.zip_with_index(mt.truncated).filter(lambda x: x[1]).map(lambda x: x[0])[0]))
+                mt = mt.select_entries(**{x: mt[x][mt.keep] for x in mt.entry})
+                mt = mt.select_cols(**{x: mt[x][mt.keep] for x in mt.col_value if x != 'keep'})
             mt = mt.select_cols(**compute_cases_binary(mt.any_codes, mt.sex),
                                 description=mt.short_meaning,
-                                description_more=NULL_STR,
+                                description_more="truncated: " + hl.str(mt.truncated) if 'truncated' in list(mt.col_value) else NULL_STR,
                                 coding_description=NULL_STR,
                                 category=mt.meaning)
             mt = mt.select_entries(**format_entries(mt.any_codes, mt.sex))
