@@ -511,3 +511,71 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
         full_mt.trait_type == 'prescriptions',
         hl.or_else(full_mt[sex], hl.float64(0.0)),
         full_mt[sex]) for sex in sexes})
+
+def load_dob_ht(pre_phesant_tsv_path):
+    dob_ht = hl.import_table(pre_phesant_tsv_path, impute=False, min_partitions=100, missing='', key='userId',
+                             types={'userId': hl.tint32, 'x54_0_0': hl.tint32})
+    year_field, month_field = dob_ht.x34_0_0, dob_ht.x52_0_0
+    month_field = hl.cond(hl.len(month_field) == 1, '0' + month_field, month_field)
+    dob_ht = dob_ht.select(
+        date_of_birth=hl.experimental.strptime(year_field + month_field + '15 00:00:00', '%Y%m%d %H:%M:%S', 'GMT'),
+        month_of_birth=month_field,
+        year_of_birth=year_field,
+        recruitment_center=dob_ht.x54_0_0
+    )
+    return dob_ht
+
+
+def load_first_occurrence_data(first_exposure_and_activity_monitor_data_path, pre_phesant_tsv_path):
+    ht = hl.import_table(first_exposure_and_activity_monitor_data_path, delimiter=',', quote='"', missing='', impute=True, key='eid')  #, min_partitions=500)
+    pseudo_dates = {'1901-01-01', '2037-07-07'}  # Pseudo date information at http://biobank.ctsu.ox.ac.uk/showcase/coding.cgi?id=819
+    mt = filter_and_annotate_ukb_data(ht, lambda k, v: k.startswith('13') and k.endswith('-0.0'), hl.str)
+
+    dob_ht = load_dob_ht(pre_phesant_tsv_path)[mt.row_key]
+    dob = dob_ht.date_of_birth
+    month = dob_ht.month_of_birth
+
+    def parse_first_occurrence(x):
+        return (hl.case(missing_false=True)
+            .when(hl.is_defined(hl.parse_float(x)), hl.float64(x))  # Source of the first code ...
+            .when(hl.literal(pseudo_dates).contains(hl.str(x)), hl.null(hl.tfloat64))  # Setting past and future dates to missing
+            .when(hl.str(x) == '1902-02-02', 0.0)  # Matches DOB
+            .when(hl.str(x) == '1903-03-03',  # Within year of birth (taking midpoint between month of birth and EOY)
+                  (hl.experimental.strptime('1970-12-31 00:00:00', '%Y-%m-%d %H:%M:%S', 'GMT') -
+                   hl.experimental.strptime('1970-' + month + '-15 00:00:00', '%Y-%m-%d %H:%M:%S',
+                                            'GMT')) / 2)
+            .default(hl.experimental.strptime(hl.str(x) + ' 00:00:00', '%Y-%m-%d %H:%M:%S', 'GMT') - dob
+        ))
+    mt = mt.annotate_entries(value=parse_first_occurrence(mt.value))
+
+    mt = mt.key_cols_by(trait_type='icd_first_occurrence',
+                        phenocode=mt.phenocode, pheno_sex='both_sexes',
+                        coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+    return mt
+
+
+def load_showcase(pheno_description_path):
+    return hl.import_table(pheno_description_path, impute=True, missing='', key='FieldID', types={'FieldID': hl.tstr})
+
+
+def load_activity_monitor_data(first_exposure_and_activity_monitor_data_path):
+    ht = hl.import_table(first_exposure_and_activity_monitor_data_path, delimiter=',', quote='"', missing='', impute=True, key='eid')  #, min_partitions=500)
+    quality_fields = ['90015-0.0', '90016-0.0', '90017-0.0']
+    qual_ht = ht.select(hq=hl.is_missing(ht['90002-0.0']) & hl.all(lambda x: x == 1, [ht[x] for x in quality_fields]))
+    mt = filter_and_annotate_ukb_data(ht, lambda x, v: x.startswith('90') and x.endswith('-0.0') and
+                                                       v.dtype in {hl.tint32, hl.tfloat64})
+    mt = mt.filter_cols(mt.ValueType == 'Continuous')
+    mt = mt.annotate_rows(**qual_ht[mt.row_key])
+    mt = mt.annotate_entries(value=hl.or_missing(hl.is_defined(mt.hq), mt.value))
+    mt = mt.key_cols_by(trait_type='continuous', phenocode=mt.phenocode, pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+    return mt
+
+
+def filter_and_annotate_ukb_data(ht, criteria, type_cast_function = hl.float64, annotate_with_showcase: bool = True):
+    fields_to_keep = {x.split('-')[0]: type_cast_function(v) for x, v in ht.row_value.items() if criteria(x, v)}
+    ht = ht.select(**fields_to_keep)
+    mt = ht.to_matrix_table_row_major(columns=list(fields_to_keep), entry_field_name='value', col_field_name='phenocode')
+    if annotate_with_showcase:
+        description_ht = load_showcase(pheno_description_path)
+        mt = mt.annotate_cols(**description_ht[mt.phenocode])
+    return mt
