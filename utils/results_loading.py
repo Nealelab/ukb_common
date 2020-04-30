@@ -1,5 +1,6 @@
 import hail as hl
 from gnomad.utils import *
+from ukb_common.resources.generic import *
 
 
 def format_pheno_dir(pheno):
@@ -195,6 +196,18 @@ def get_saige_version_from_log(null_glmm_log):
                 except:
                     logger.warning(f'Could not load version number from {line2} in {null_glmm_log}.')
     return version
+
+
+def get_inverse_normalize_status(null_glmm_log):
+    status = 'Unknown'
+    with hl.hadoop_open(null_glmm_log) as f:
+        for line in f:
+            if line.startswith('$invNormalize'):
+                try:
+                    status = f.readline().strip().split()[1]
+                except:
+                    logger.warning(f'Could not load inv_norm status from {line} in {null_glmm_log}.')
+    return status.capitalize()
 
 
 def get_saige_timing_grep(all_files):
