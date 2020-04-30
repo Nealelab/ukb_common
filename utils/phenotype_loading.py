@@ -486,7 +486,12 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
                                 coding_description=NULL_STR,
                                 category=mt.meaning)
             mt = mt.select_entries(**format_entries(mt.any_codes, mt.sex))
-        else: # elif data_type == 'biomarkers':
+        elif data_type == 'icd_first_occurrence':
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_cols(**compute_cases_binary(hl.is_defined(mt.both_sexes), mt.sex),
+                                description=mt.Field, description_more=mt.Notes,
+                                coding_description=NULL_STR, category=mt.Path)
+        else: # 'biomarkers', 'activity_monitor'
             mt = mt.key_cols_by(trait_type=mt.trait_type if 'trait_type' in list(mt.col) else data_type,
                                 phenocode=hl.str(mt.pheno), pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
             mt = mt.select_entries(**format_entries(mt.value, mt.sex))
