@@ -303,7 +303,8 @@ def union_ht(all_hts, col_fields, pheno_dict, temp_dir, inner_mode: str = 'overw
 def pull_out_col_keys(all_hts, row_keys, col_keys):
     rekeyed_hts = []
     for ht in all_hts:
-        glob = ht.aggregate(hl.agg.take(hl.struct(**{x: ht[x] for x in col_keys}), 1)[0], _localize=False)
+        ht2 = ht.head(1)
+        glob = ht2.aggregate(hl.agg.take(hl.struct(**{x: ht2[x] for x in col_keys}), 1)[0], _localize=False)
         rekeyed_hts.append(ht.key_by(*row_keys).drop(*col_keys).annotate_globals(**glob))
     return rekeyed_hts
 
