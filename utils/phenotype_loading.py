@@ -331,26 +331,24 @@ def load_prescription_data(prescription_data_tsv_path: str, prescription_mapping
     return ht.to_matrix_table(row_key=['eid'], col_key=['Generic_Name'], col_fields=['Drug_Category_and_Indication'])
 
 
-def make_cooccurrence_ht(mt: hl.MatrixTable):
-    mt = mt.annotate_cols(n_cases=hl.agg.sum(mt.any_codes))
-    mt = mt.filter_cols(mt.n_cases >= 500).add_col_index()
-    ht = mt.key_cols_by('col_idx').cols()
-    bm = hl.linalg.BlockMatrix.from_entry_expr(mt.any_codes)
+def make_pairwise_ht(mt: hl.MatrixTable, pheno_field, min_cases: int = 500, correlation: bool = False):
+    mt = mt.annotate_entries(_pheno=pheno_field)
+    if not correlation:
+        mt = mt.annotate_cols(n_cases=hl.agg.sum(mt._pheno))
+        mt = mt.filter_cols(mt.n_cases >= min_cases)
+    else:
+        mt = mt.filter_cols(mt.n_cases_both_sexes > 0)  # TODO: update this
+    mt = mt.add_col_index()
+    index_ht = mt.cols().key_by('col_idx')
+    if correlation:
+        bm = hl.linalg.BlockMatrix.from_entry_expr(mt._pheno, mean_impute=True, center=True, normalize=True, axis='cols', block_size=1024)
+    else:
+        bm = hl.linalg.BlockMatrix.from_entry_expr(mt._pheno, block_size=1024)
     bm = bm.T @ bm
     pheno_ht = bm.entries()
-    pheno_ht = pheno_ht.annotate(i_data=ht[pheno_ht.i], j_data=ht[pheno_ht.j])
-    pheno_ht = pheno_ht.annotate(prop_overlap=pheno_ht.entry / pheno_ht.i_data.n_cases)
-    # pheno_ht = pheno_ht.checkpoint(f'{pheno_folder}/pheno_combo_explore/pheno_overlap.ht')
-
-
-def make_correlation_ht(mt: hl.MatrixTable):
-    mt = mt.filter_cols(mt.n_cases_both_sexes > 0).add_col_index()
-    ht = mt.cols().key_by('col_idx')
-    pheno = mt.value if 'value' in list(mt.entry) else mt.both_sexes
-    bm = hl.linalg.BlockMatrix.from_entry_expr(pheno, mean_impute=True, center=True, normalize=True, axis='cols', block_size=512)
-    bm = bm.T @ bm
-    pheno_ht = bm.entries()
-    pheno_ht = pheno_ht.annotate(i_data=ht[pheno_ht.i], j_data=ht[pheno_ht.j])
+    pheno_ht = pheno_ht.annotate(i_data=index_ht[pheno_ht.i], j_data=index_ht[pheno_ht.j])
+    if not correlation:
+        pheno_ht = pheno_ht.annotate(prop_overlap=pheno_ht.entry / pheno_ht.i_data.n_cases)
     return pheno_ht
 
 
