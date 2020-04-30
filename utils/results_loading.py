@@ -309,13 +309,12 @@ def pull_out_col_keys(all_hts, row_keys, col_keys):
     return rekeyed_hts
 
 
-def join_pheno_hts_to_mt(all_hts, row_keys, col_keys, pheno_dict, temp_dir, inner_mode: str = 'overwrite',
+def join_pheno_hts_to_mt(all_hts, row_keys, col_keys, temp_dir = None, inner_mode: str = 'overwrite',
                          repartition_final: int = None):
     rekeyed_hts = pull_out_col_keys(all_hts, row_keys, col_keys)
     mt = mwzj_hts_by_tree(rekeyed_hts, temp_dir, col_keys, debug=True,
                           inner_mode=inner_mode, repartition_final=repartition_final)
     print(f'Unioned MTs...')
-    mt = mt.annotate_cols(**pheno_dict[mt.col_key])  # .key_rows_by('locus', 'alleles')
     return mt
 
 
