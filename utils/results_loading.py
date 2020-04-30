@@ -358,6 +358,93 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
     return ht
 
 
+def stringify_pheno_key_dict(pheno_key_dict, format_phenocode_field: bool = False, delimiter='-'):
+    return delimiter.join([format_pheno_dir(pheno_key_dict[x])
+                           if x == 'phenocode' and format_phenocode_field
+                           else pheno_key_dict[x] for x in PHENO_KEY_FIELDS if x in pheno_key_dict])
+
+
+
+def get_results_prefix(pheno_results_dir, pheno_key_dict, chromosome, start_pos, legacy: bool = False):
+    prefix = f'{pheno_results_dir}/result_'
+    if legacy:
+        prefix += format_pheno_dir(pheno_key_dict["phenocode"])
+    else:
+        prefix += stringify_pheno_key_dict(pheno_key_dict, True)
+    return f'{prefix}_{chromosome}_{str(start_pos).zfill(9)}'
+
+
+def get_pheno_output_path(pheno_export_dir, pheno_coding_trait, extension = '.tsv', legacy: bool = False):
+    if legacy:
+        extended_suffix = pheno_coding_trait['coding']
+    else:
+        extended_suffix = f'{pheno_coding_trait["pheno_sex"]}-{pheno_coding_trait["coding"]}-{pheno_coding_trait["modifier"]}'
+    return f'{pheno_export_dir}/{pheno_coding_trait["trait_type"]}-{format_pheno_dir(pheno_coding_trait["phenocode"])}-{extended_suffix}{extension}'
+
+
+def recode_pkd_to_legacy(pheno_key_dict_list):
+    for pheno_key_dict in pheno_key_dict_list:
+        recode_single_pkd_to_legacy(pheno_key_dict)
+    return pheno_key_dict_list
+
+
+def recode_single_pkd_to_legacy(pheno_key_dict):
+    if pheno_key_dict['trait_type'] == 'icd10':
+        pheno_key_dict['trait_type'] = 'icd_all'
+        pheno_key_dict['coding'] = 'icd10'
+    elif pheno_key_dict['trait_type'] == 'phecode':
+        pheno_key_dict['coding'] = pheno_key_dict['pheno_sex']
+    elif pheno_key_dict['trait_type'] == 'biomarkers':
+        pheno_key_dict['coding'] = pheno_key_dict['phenocode']
+    else:
+        if pheno_key_dict['phenocode'] == 'whr':
+            pheno_key_dict['coding'] = 'whr'
+        else:
+            pheno_key_dict['coding'] = pheno_key_dict['coding'] if pheno_key_dict['coding'] else pheno_key_dict['modifier']
+    del pheno_key_dict['pheno_sex']
+    del pheno_key_dict['modifier']
+
+
+def recode_pkd_to_new(pheno_key_dict_list):
+    for pheno_key_dict in pheno_key_dict_list:
+        recode_single_pkd_to_new(pheno_key_dict)
+    return pheno_key_dict_list
+
+
+def recode_single_pkd_to_new(pheno_key_dict):
+    new_dict = {}
+    SEX = 'both_sexes'
+    if pheno_key_dict['trait_type'] == 'icd_all':
+        new_dict['trait_type'] = 'icd10'
+        new_dict['phenocode'] = pheno_key_dict['phenocode']
+        new_dict['pheno_sex'] = SEX
+        new_dict['coding'] = ''
+        new_dict['modifier'] = ''
+    else:
+        new_dict['trait_type'] = pheno_key_dict['trait_type']
+        new_dict['phenocode'] = pheno_key_dict['phenocode']
+        if pheno_key_dict['trait_type'] == 'phecode':
+            new_dict['pheno_sex'] = pheno_key_dict['coding']
+            new_dict['coding'] = ''
+            new_dict['modifier'] = ''
+        else:
+            new_dict['pheno_sex'] = SEX
+            if pheno_key_dict['trait_type'] == 'categorical':
+                new_dict['coding'] = pheno_key_dict['coding']
+                new_dict['modifier'] = ''
+            elif pheno_key_dict['trait_type'] == 'continuous':
+                if pheno_key_dict['phenocode'] == 'whr':
+                    new_dict['coding'] = ''
+                    new_dict['modifier'] = 'irnt'
+                else:
+                    new_dict['coding'] = ''
+                    new_dict['modifier'] = pheno_key_dict['coding']
+            else:
+                new_dict['coding'] = ''
+                new_dict['modifier'] = ''
+    return new_dict
+
+
 def unify_saige_ht_variant_schema(ht):
     shared = ('markerID', 'AC', 'AF', 'N', 'BETA', 'SE', 'Tstat', 'varT', 'varTstar')
     new_floats = ('AF.Cases', 'AF.Controls')
