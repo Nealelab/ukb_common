@@ -499,7 +499,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
                                 description=mt.Field, description_more=NULL_STR, coding_description=NULL_STR, category=mt.Path)
         # else:
         #     raise ValueError('pheno or icd_code not in column key. New data type?')
-
+        mt = mt.checkpoint(tempfile.mktemp(prefix=f'/tmp/{data_type}_', suffix='.mt'))
         if full_mt is None:
             full_mt = mt
         else:
