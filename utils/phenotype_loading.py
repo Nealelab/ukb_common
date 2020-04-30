@@ -393,23 +393,26 @@ def combine_pheno_files(pheno_file_dict: dict):
         full_mt.value))
 
 
+def compute_cases_binary(field, sex_field):
+    return dict(
+        n_cases_both_sexes=hl.agg.count_where(field),
+        n_cases_females=hl.agg.count_where(field & (sex_field == 0)),
+        n_cases_males=hl.agg.count_where(field & (sex_field == 1))
+    )
+
+
+def format_entries(field, sex_field):
+    return dict(
+        both_sexes=hl.float64(field),
+        females=hl.float64(hl.or_missing(sex_field == 0, field)),
+        males=hl.float64(hl.or_missing(sex_field == 1, field))
+    )
+
+
 def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, truncated_codes_only: bool = True,
                                   custom_data_categorical: bool = True):
     full_mt: hl.MatrixTable = None
     sexes = ('both_sexes', 'females', 'males')
-
-    def compute_cases_binary(field, sex_field):
-        return dict(
-            n_cases_both_sexes=hl.agg.count_where(field),
-            n_cases_females=hl.agg.count_where(field & (sex_field == 0)),
-            n_cases_males=hl.agg.count_where(field & (sex_field == 1))
-        )
-    def format_entries(field, sex_field):
-        return dict(
-            both_sexes=hl.float64(field),
-            females=hl.float64(hl.or_missing(sex_field == 0, field)),
-            males=hl.float64(hl.or_missing(sex_field == 1, field))
-        )
 
     for data_type, mt in pheno_file_dict.items():
         mt = mt.select_rows(**cov_ht[mt.row_key])
