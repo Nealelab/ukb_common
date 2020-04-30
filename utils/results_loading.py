@@ -338,6 +338,8 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
                        'AF.Controls', 'Pvalue', gene=hl.or_else(ht.gene, ''), annotation=hl.or_else(ht.annotation, ''))
     if 'heritability' in list(ht.globals):
         ht = ht.drop('heritability')
+    if 'saige_version' in list(ht.globals):
+        ht = ht.drop('saige_version')
 
     if patch_case_control_count:
         if not ht.n_cases.collect()[0]:
