@@ -81,11 +81,16 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
     )
     if rekey:
         mt = mt.key_cols_by(
-            pheno=pheno_function_type(mt.phesant_pheno.split('_')[0]),
+            trait_type=data_type,
+            phenocode=pheno_function_type(mt.phesant_pheno.split('_')[0]),
+            pheno_sex='both_sexes',
             coding=hl.case()
-                .when(hl.len(mt.phesant_pheno.split('_')) == 1, mt.phesant_pheno)
-                .when(hl.len(mt.phesant_pheno.split('_')) > 1, mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
-                .or_error('A categorical was found not in the format of int_int')
+                .when((data_type == 'categorical') & (hl.len(mt.phesant_pheno.split('_')) > 1), mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
+                .default(NULL_STR_KEY),
+            modifier=hl.case()
+                .when((data_type == 'continuous') & (hl.len(mt.phesant_pheno.split('_')) > 1),
+                      mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
+                .default(NULL_STR_KEY)
         )
     return mt
 
