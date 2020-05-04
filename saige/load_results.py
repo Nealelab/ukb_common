@@ -24,7 +24,8 @@ def main(args):
     pheno_key_dict = {k: getattr(args, k) for k in PHENO_KEY_FIELDS}
     if args.analysis_type == 'gene':
         load_gene_data(args.input_dir, pheno_key_dict, args.gene_map_ht_raw_path, cases, controls, heritability, saige_version, args.overwrite)
-    load_variant_data(args.input_dir, pheno_key_dict, args.ukb_vep_ht_path, extension, cases, controls, heritability, saige_version, args.overwrite)
+    load_variant_data(args.input_dir, pheno_key_dict, args.ukb_vep_ht_path, extension, cases, controls, heritability, saige_version, args.overwrite,
+                      args.legacy_annotations)
 
 
 if __name__ == '__main__':
@@ -43,6 +44,7 @@ if __name__ == '__main__':
     parser.add_argument('--gene_map_ht_raw_path', help='Path to raw gene map')
     parser.add_argument('--ukb_vep_ht_path', help='Path to UKB VEP data', required=True)
     parser.add_argument('--n_threads', help='Number of threads to run', type=int, default=8)
+    parser.add_argument('--legacy_annotations', help='Use old annotation picking (preferred for genotype data)', action='store_true')
     parser.add_argument('--overwrite', help='Overwrite everything', action='store_true')
     args = parser.parse_args()
 

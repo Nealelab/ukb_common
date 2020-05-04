@@ -233,7 +233,7 @@ def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: 
 def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold,
                            vep_path: str, docker_image: str, gene_map_path: str = None, null_glmm_log: str = '',
                            reference: str = 'GRCh38', saige_log: str = '', analysis_type: str = 'gene',
-                           n_threads: int = 8, storage: str = '500Mi'):
+                           n_threads: int = 8, storage: str = '500Mi', legacy_annotations: bool = False):
     load_data_task: Job = p.new_job(name=f'load_data', attributes=copy.deepcopy(pheno_keys)
                                     ).image(docker_image).cpu(n_threads).storage(storage)
     load_data_task.always_run().depends_on(*tasks_to_hold)
@@ -244,6 +244,7 @@ def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold
     --saige_run_log_format {saige_log}
     {pheno_dict_opts}
     {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
+    {"--legacy_annotations" if legacy_annotations else ""}
     --ukb_vep_ht_path {vep_path}
     --overwrite --reference {reference}
     --analysis_type {analysis_type}

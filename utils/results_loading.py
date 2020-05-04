@@ -77,18 +77,19 @@ def annotation_case_builder_ukb_legacy(worst_csq_by_gene_canonical_expr):
             .or_missing())
 
 
-def get_vep_formatted_data(ukb_vep_path: str):
+def get_vep_formatted_data(ukb_vep_path: str, legacy_annotations: bool = False):
     ht = hl.read_table(ukb_vep_path)
     ht = process_consequences(ht)
     ht = ht.explode(ht.vep.worst_csq_by_gene_canonical)
+    annotation_func = annotation_case_builder_ukb_legacy if legacy_annotations else annotation_case_builder
     return ht.select(
         gene=ht.vep.worst_csq_by_gene_canonical.gene_symbol,
-        annotation=annotation_case_builder_ukb_legacy(ht.vep.worst_csq_by_gene_canonical))
+        annotation=annotation_func(ht.vep.worst_csq_by_gene_canonical))
 
 
 def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extension: str = 'single.txt',
                       n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0,
-                      saige_version: str = 'NA', overwrite: bool = False):
+                      saige_version: str = 'NA', overwrite: bool = False, legacy_annotations: bool = False):
     output_ht_path = f'{directory}/variant_results.ht'
     ht = hl.import_table(f'{directory}/*.{extension}', delimiter=' ', impute=True)
     print(f'Loading: {directory}/*.{extension} ...')
@@ -105,7 +106,7 @@ def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extensi
         ht = ht.drop('CHR', 'POS', 'rsid', 'Allele1', 'Allele2')
     ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(
         n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version)
-    ht = ht.annotate(**get_vep_formatted_data(ukb_vep_path)[
+    ht = ht.annotate(**get_vep_formatted_data(ukb_vep_path, legacy_annotations=legacy_annotations)[
         hl.struct(locus=ht.locus, alleles=ht.alleles)])  # TODO: fix this for variants that overlap multiple genes
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls', 'heritability')
     # mt = ht.to_matrix_table(['locus', 'alleles'], list(pheno_key_dict.keys()),
