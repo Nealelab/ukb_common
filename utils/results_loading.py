@@ -62,8 +62,19 @@ def annotation_case_builder(worst_csq_by_gene_canonical_expr, use_loftee: bool =
         case = case.when(worst_csq_by_gene_canonical_expr.most_severe_consequence == 'synonymous_variant', 'synonymous')
     else:
         case = case.when(hl.set(SYNONYMOUS_CSQS).contains(worst_csq_by_gene_canonical_expr.most_severe_consequence), 'synonymous')
-    case=  case.when(hl.set(OTHER_CSQS).contains(worst_csq_by_gene_canonical_expr.most_severe_consequence), 'non-coding')
+    case = case.when(hl.set(OTHER_CSQS).contains(worst_csq_by_gene_canonical_expr.most_severe_consequence), 'non-coding')
     return case.or_missing()
+
+
+def annotation_case_builder_ukb_legacy(worst_csq_by_gene_canonical_expr):
+    return (hl.case(missing_false=True)
+            .when(worst_csq_by_gene_canonical_expr.lof == 'HC', 'pLoF')
+            .when(worst_csq_by_gene_canonical_expr.lof == 'LC', 'LC')
+            .when((worst_csq_by_gene_canonical_expr.most_severe_consequence == 'missense_variant') |
+                  (worst_csq_by_gene_canonical_expr.most_severe_consequence == 'inframe_insertion') |
+                  (worst_csq_by_gene_canonical_expr.most_severe_consequence == 'inframe_deletion'), 'missense')
+            .when(worst_csq_by_gene_canonical_expr.most_severe_consequence == 'synonymous_variant', 'synonymous')
+            .or_missing())
 
 
 def get_vep_formatted_data(ukb_vep_path: str):
@@ -72,7 +83,7 @@ def get_vep_formatted_data(ukb_vep_path: str):
     ht = ht.explode(ht.vep.worst_csq_by_gene_canonical)
     return ht.select(
         gene=ht.vep.worst_csq_by_gene_canonical.gene_symbol,
-        annotation=annotation_case_builder(ht.vep.worst_csq_by_gene_canonical))
+        annotation=annotation_case_builder_ukb_legacy(ht.vep.worst_csq_by_gene_canonical))
 
 
 def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extension: str = 'single.txt',
