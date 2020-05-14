@@ -1,5 +1,4 @@
 import hail as hl
-from gnomad.utils import *
 
 
 def load_all_mfi_data():
@@ -34,6 +33,7 @@ def mac_category_case_builder(call_stats_expr):
 def prepare_mt_for_plink(mt: hl.MatrixTable, n_samples: int, min_call_rate: float = 0.95,
                          variants_per_mac_category: int = 2000,
                          variants_per_maf_category: int = 10000):
+    from gnomad.utils.filtering import filter_to_autosomes
     mt = filter_to_autosomes(mt)
     mt = mt.filter_rows((mt.call_stats.AN >= n_samples * 2 * min_call_rate) &
                         (mt.call_stats.AC[1] > 0))

@@ -1,5 +1,4 @@
 import hail as hl
-from gnomad.utils import *
 from ukb_common.resources.generic import *
 
 
@@ -78,6 +77,7 @@ def annotation_case_builder_ukb_legacy(worst_csq_by_gene_canonical_expr):
 
 
 def get_vep_formatted_data(ukb_vep_path: str, legacy_annotations: bool = False):
+    from gnomad.utils.vep import process_consequences
     ht = hl.read_table(ukb_vep_path)
     ht = process_consequences(ht)
     ht = ht.explode(ht.vep.worst_csq_by_gene_canonical)
