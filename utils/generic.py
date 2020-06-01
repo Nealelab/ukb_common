@@ -143,3 +143,13 @@ def create_genome_intervals_file() -> hl.Table:
     ht = ht.select(**ht.regions)
     return ht.key_by('interval')
 
+
+def downsample_table_by_x_y(ht, x, y, label: dict = None, x_field_name: str = 'x', y_field_name: str = 'y',
+                            n_divisions: int = 500):
+    res = ht.aggregate(hl.agg.downsample(x, y, label=hl.array(list(label.values())), n_divisions=n_divisions), _localize=False)
+    ht = hl.utils.range_table(1).annotate(data=res).explode('data')
+    # ht = ht.drop('idx')  # TODO: add once https://github.com/hail-is/hail/issues/8751 is fixed
+    ht = ht.select(**{x_field_name: ht.data[0], y_field_name: ht.data[1]},
+                   **{l: ht.data[2][i] for i, l in enumerate(label.keys())})
+    return ht
+
