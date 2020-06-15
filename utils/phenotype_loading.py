@@ -627,8 +627,9 @@ def load_activity_monitor_data(first_exposure_and_activity_monitor_data_path):
     return mt
 
 
-def filter_and_annotate_ukb_data(ht, criteria, type_cast_function = hl.float64, annotate_with_showcase: bool = True):
-    fields_to_keep = {x.split('-')[0]: type_cast_function(v) for x, v in ht.row_value.items() if criteria(x, v)}
+def filter_and_annotate_ukb_data(ht, criteria, type_cast_function = hl.float64, annotate_with_showcase: bool = True,
+                                 format_col_name = lambda x: x.split('-')[0]):
+    fields_to_keep = {format_col_name(x): type_cast_function(v) for x, v in ht.row_value.items() if criteria(x, v)}
     ht = ht.select(**fields_to_keep)
     mt = ht.to_matrix_table_row_major(columns=list(fields_to_keep), entry_field_name='value', col_field_name='phenocode')
     if annotate_with_showcase:
