@@ -282,6 +282,7 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
     :return:
     :rtype: Table
     """
+    assert ht.head(1).annotation.collect()[0] is None, f'failed at {patch_case_control_count}'
     if 'AF.Cases' not in list(ht.row):
         ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
                        **{'p.value.NA': hl.null(hl.tfloat64), 'Is.SPA.converge': hl.null(hl.tint32),
@@ -292,10 +293,6 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
         ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
                        'p.value.NA', 'Is.SPA.converge', 'varT', 'varTstar', 'AF.Cases',
                        'AF.Controls', 'Pvalue', gene=hl.or_else(ht.gene, ''), annotation=hl.or_else(ht.annotation, ''))
-    if 'heritability' in list(ht.globals):
-        ht = ht.drop('heritability')
-    if 'saige_version' in list(ht.globals):
-        ht = ht.drop('saige_version')
 
     ht2 = ht.head(1)
     pheno_key_dict = dict(ht2.aggregate(hl.agg.take(ht2.key, 1)[0]))
@@ -311,6 +308,10 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
             if cases == -1: cases = hl.null(hl.tint)
             if controls == -1: controls = hl.null(hl.tint)
             ht = ht.annotate_globals(n_cases=cases, n_controls=controls)
+    if 'heritability' not in list(ht.globals):
+        ht = ht.annotate_globals(heritability=hl.null(hl.tfloat64))
+    if 'saige_version' not in list(ht.globals):
+        ht = ht.annotate_globals(saige_version=hl.null(hl.tstr))
     return ht
 
 
