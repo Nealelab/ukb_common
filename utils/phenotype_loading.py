@@ -3,6 +3,7 @@ import subprocess
 import os
 import tempfile
 import hail as hl
+from ukb_common.resources.generic import *
 
 NULL_STR_KEY = ''
 NULL_STR = hl.null(hl.tstr)
@@ -48,8 +49,7 @@ def get_codings():
     return full_ht.repartition(10)
 
 
-def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('age', 'sex'),
-                   pheno_function_type = hl.int, rekey: bool = True):
+def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('age', 'sex'), rekey: bool = True):
     """
     Input Hail Table with lots of phenotype row fields, distill into
     MatrixTable with either categorical or continuous data types
@@ -82,7 +82,7 @@ def pheno_ht_to_mt(pheno_ht: hl.Table, data_type: str, special_fields: str = ('a
     if rekey:
         mt = mt.key_cols_by(
             trait_type=data_type,
-            phenocode=pheno_function_type(mt.phesant_pheno.split('_')[0]),
+            phenocode=mt.phesant_pheno.split('_')[0],
             pheno_sex='both_sexes',
             coding=hl.case()
                 .when((data_type == 'categorical') & (hl.len(mt.phesant_pheno.split('_')) > 1), mt.phesant_pheno.split('_', 2)[1])  # TODO: fix to 1 when https://github.com/hail-is/hail/issues/7893 is fixed
@@ -153,7 +153,7 @@ def get_phesant_reassignments(phesant_summary):
     ht = ht.filter(ht.reassign[1] != 'NA')
     ht = ht.transmute(reassign_from=ht.reassign[0], reassign_to=ht.reassign[1])
     ht = ht.key_by(
-        pheno=hl.int(ht.FieldID.split('_')[0]),
+        pheno=ht.FieldID.split('_')[0],
         coding=hl.or_missing(hl.len(ht.FieldID.split('_')) > 1, ht.FieldID.split('_')[1])
     )
     return ht.filter(ht.reassign_to == ht.coding)
@@ -175,9 +175,8 @@ def add_coding_information(mt: hl.MatrixTable, coding_ht: hl.Table, phesant_phen
     if download_missing_codings: get_missing_codings(mt.cols())
     phesant_summary = hl.import_table(phesant_phenotype_info_path, impute=True, missing='', key='FieldID')
     phesant_reassign = get_phesant_reassignments(phesant_summary)
-    phesant_reassign = phesant_reassign.key_by('pheno', coding=hl.str(phesant_reassign.coding))
     mt = mt.annotate_cols(recoding=hl.or_missing(
-        hl.is_missing(mt.meaning), phesant_reassign[mt.col_key].reassign_from
+        hl.is_missing(mt.meaning), phesant_reassign[mt.col_key.select('phenocode', 'coding')].reassign_from
     ))
     return mt.annotate_cols(**hl.cond(hl.is_defined(mt.meaning),
                                       hl.struct(**{x: mt[x] for x in list(coding_ht.row_value)}),
@@ -204,12 +203,12 @@ def combine_datasets(mt_path_dict: dict, summary_tsv_path_dict: dict = None,
     male_mt = hl.read_matrix_table(mt_path_dict['males'])
 
     if pheno_description_path is not None:
-        description_ht = hl.import_table(pheno_description_path, impute=True, missing='', key='FieldID')
+        description_ht = hl.import_table(pheno_description_path, impute=True, missing='', key='FieldID', types={'FieldID': hl.tstr})
         description_ht = description_ht.transmute(coding_id=description_ht.Coding)
 
-        both_mt = both_mt.annotate_cols(**description_ht[both_mt.pheno])
-        female_mt = female_mt.annotate_cols(**description_ht[female_mt.pheno])
-        male_mt = male_mt.annotate_cols(**description_ht[male_mt.pheno])
+        both_mt = both_mt.annotate_cols(**description_ht[both_mt.phenocode])
+        female_mt = female_mt.annotate_cols(**description_ht[female_mt.phenocode])
+        male_mt = male_mt.annotate_cols(**description_ht[male_mt.phenocode])
 
     if coding_ht_path is not None and summary_tsv_path_dict is not None and data_type == 'categorical':
         coding_ht = hl.read_table(coding_ht_path)
