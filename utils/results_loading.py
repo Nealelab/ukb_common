@@ -89,7 +89,7 @@ def get_vep_formatted_data(ukb_vep_path: str, legacy_annotations: bool = False):
 
 def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extension: str = 'single.txt',
                       n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0,
-                      saige_version: str = 'NA', overwrite: bool = False, legacy_annotations: bool = False):
+                      saige_version: str = 'NA', inv_normalized: str = 'NA', overwrite: bool = False, legacy_annotations: bool = False):
     output_ht_path = f'{directory}/variant_results.ht'
     ht = hl.import_table(f'{directory}/*.{extension}', delimiter=' ', impute=True)
     print(f'Loading: {directory}/*.{extension} ...')
@@ -99,13 +99,14 @@ def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extensi
     if n_controls == -1: n_controls = hl.null(hl.tint)
     if heritability == -1.0: heritability = hl.null(hl.tfloat)
     if saige_version == 'NA': saige_version = hl.null(hl.tstr)
+    if inv_normalized == 'NA': inv_normalized = hl.null(hl.tstr)
 
     ht = ht.key_by(locus=hl.parse_locus(locus_alleles[0]), alleles=locus_alleles[1].split('/'),
                    **pheno_key_dict).distinct().naive_coalesce(50)
     if marker_id_col == 'SNPID':
         ht = ht.drop('CHR', 'POS', 'rsid', 'Allele1', 'Allele2')
     ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(
-        n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version)
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version, inv_normalized=inv_normalized)
     ht = ht.annotate(**get_vep_formatted_data(ukb_vep_path, legacy_annotations=legacy_annotations)[
         hl.struct(locus=ht.locus, alleles=ht.alleles)])  # TODO: fix this for variants that overlap multiple genes
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls', 'heritability')
@@ -117,7 +118,7 @@ def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extensi
 
 def load_gene_data(directory: str, pheno_key_dict, gene_ht_map_path: str,
                    n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0, saige_version: str = 'NA',
-                   overwrite: bool = False):
+                   inv_normalized: str = 'NA', overwrite: bool = False):
     output_ht_path = f'{directory}/gene_results.ht'
     print(f'Loading: {directory}/*.gene.txt ...')
     types = {f'Nmarker_MACCate_{i}': hl.tint32 for i in range(1, 9)}
@@ -127,12 +128,13 @@ def load_gene_data(directory: str, pheno_key_dict, gene_ht_map_path: str,
     if n_controls == -1: n_controls = hl.null(hl.tint)
     if heritability == -1.0: heritability = hl.null(hl.tfloat)
     if saige_version == 'NA': saige_version = hl.null(hl.tstr)
+    if inv_normalized == 'NA': inv_normalized = hl.null(hl.tstr)
 
     fields = ht.Gene.split('_')
     gene_ht = hl.read_table(gene_ht_map_path).select('interval').distinct()
     ht = ht.key_by(gene_id=fields[0], gene_symbol=fields[1], annotation=fields[2],
                    **pheno_key_dict).drop('Gene').naive_coalesce(10).annotate_globals(
-        n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version)
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version, inv_normalized=inv_normalized)
     ht = ht.annotate(total_variants=hl.sum([v for k, v in list(ht.row_value.items()) if 'Nmarker' in k]),
                      interval=gene_ht.key_by('gene_id')[ht.gene_id].interval)
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls')

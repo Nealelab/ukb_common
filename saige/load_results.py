@@ -18,13 +18,14 @@ def main(args):
 
     quantitative_trait = args.trait_type in ('continuous', 'biomarkers')
     heritability = get_heritability_from_log(args.null_glmm_log, quantitative_trait) if args.null_glmm_log else -1.0
+    inv_normalized = get_inverse_normalize_status(args.null_glmm_log) if args.null_glmm_log else 'NA'
     saige_version = get_saige_version_from_log(args.null_glmm_log) if args.null_glmm_log else 'NA'
 
     extension = 'single.txt' if args.analysis_type == 'gene' else 'single_variant.txt'
     pheno_key_dict = {k: getattr(args, k) for k in PHENO_KEY_FIELDS}
     if args.analysis_type == 'gene':
-        load_gene_data(args.input_dir, pheno_key_dict, args.gene_map_ht_raw_path, cases, controls, heritability, saige_version, args.overwrite)
-    load_variant_data(args.input_dir, pheno_key_dict, args.ukb_vep_ht_path, extension, cases, controls, heritability, saige_version, args.overwrite,
+        load_gene_data(args.input_dir, pheno_key_dict, args.gene_map_ht_raw_path, cases, controls, heritability, saige_version, inv_normalized, args.overwrite)
+    load_variant_data(args.input_dir, pheno_key_dict, args.ukb_vep_ht_path, extension, cases, controls, heritability, saige_version, inv_normalized, args.overwrite,
                       args.legacy_annotations)
 
 
