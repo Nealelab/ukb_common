@@ -25,6 +25,8 @@ def create_broadcast_dict(key, value = None):
     :return: Hail DictExpression (without an index)
     :rtype: DictExpression
     """
+    if isinstance(key, hl.Table):
+        key = key.key
     ht = key._indices.source
     if value is None:
         value = ht.row_value
@@ -159,4 +161,20 @@ def downsample_table_by_x_y(ht, x, y, label: dict = None, x_field_name: str = 'x
     ht = ht.select(**{x_field_name: ht.data[0], y_field_name: ht.data[1]},
                    **{l: ht.data[2][i] for i, l in enumerate(label.keys())})
     return ht
+
+
+def locus_alleles_to_chr_pos_ref_alt(t, unkey_drop_and_add_as_prefix: bool = False):
+    annotation = {
+        'chrom': t.locus.contig, 'pos': t.locus.position,
+        'ref': t.alleles[0], 'alt': t.alleles[1],
+    }
+    if unkey_drop_and_add_as_prefix:
+        if isinstance(t, hl.MatrixTable):
+            t = t.annotate_rows(**annotation).key_rows_by()
+            return t.select_rows(*annotation, *t.row.drop('locus', 'alleles', *annotation))
+        else:
+            t = t.annotate(**annotation).key_by()
+            return t.select(*annotation, *t.row.drop('locus', 'alleles', *annotation))
+    else:
+        return t.annotate_rows(**annotation) if isinstance(t, hl.MatrixTable) else t.annotate(**annotation)
 
