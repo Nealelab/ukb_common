@@ -1,6 +1,8 @@
 
 PHENO_KEY_FIELDS = ('trait_type', 'phenocode', 'pheno_sex', 'coding', 'modifier')
-PHENO_COLUMN_FIELDS = ('n_cases_both_sexes', 'n_cases_females', 'n_cases_males', 'description', 'description_more', 'coding_description', 'category')
+PHENO_DESCRIPTION_FIELDS = ('description', 'description_more', 'coding_description', 'category')
+PHENO_COLUMN_FIELDS = ('n_cases_both_sexes', 'n_cases_females', 'n_cases_males', *PHENO_DESCRIPTION_FIELDS)
+PHENO_GWAS_FIELDS = ('n_cases', 'n_controls', 'heritability', 'saige_version', 'inv_normalized')
 
 pheno_description_raw_path = 'gs://ukbb-exome-public/pheno_meta/Data_Dictionary_Showcase.csv'
 pheno_description_path = 'gs://ukbb-exome-public/pheno_meta/Data_Dictionary_Showcase.tsv'
