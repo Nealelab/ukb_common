@@ -15,6 +15,7 @@ saige_pheno_types = {
     'biomarkers': 'quantitative',
     'categorical': 'binary',
     'icd': 'binary',
+    'icd_first_occurrence': 'binary',
     'icd_all': 'binary',
     'phecode': 'binary',
     'prescriptions': 'binary'
@@ -173,7 +174,7 @@ def fit_null_glmm(p: Batch, output_root: str, pheno_file: Resource, trait_type: 
 
 
 def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: str,
-              vcf_file: ResourceGroup, samples_file: ResourceGroup,
+          vcf_file: ResourceGroup, samples_file: ResourceGroup,
               docker_image: str,
               group_file: str = None, sparse_sigma_file: str = None, use_bgen: bool = True,
               trait_type: str = 'continuous',

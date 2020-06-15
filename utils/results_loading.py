@@ -476,3 +476,36 @@ def mwzj_hts_by_tree(all_hts, temp_dir, globals_for_col_key, debug=False, inner_
     ht = ht.transmute_globals(inner_global=hl.flatmap(lambda x: x.global_field_name, ht.global_field_name_outer))
     mt = ht._unlocalize_entries('inner_row', 'inner_global', globals_for_col_key)
     return mt
+
+
+def generate_lambda_ht_by_freq(mt):
+    ac_cutoffs = list(range(0, 6)) + [10, 20, 50, 100]
+    af_cutoffs = sorted([0] + [y * 10 ** x for y in (1, 2, 5) for x in range(-4, 0)] + [0.99])
+
+    af_cases = mt['AF.Cases']
+    ac_cases = af_cases * mt.n_cases * 2
+
+    af_total = mt['AF_Allele2']
+    ac_total = af_total * 2 * (mt.n_cases + mt.n_controls)
+    p_value_field = mt.Pvalue
+
+    sig_threshold = 5e-8
+
+    mt = mt.annotate_cols(sumstats_qc=hl.struct(**{
+        f'{metric}_{breakdown}_{flavor}': [hl.agg.filter(breakdown_dict[flavor] >= cutoff, agg) for cutoff in cutoffs]
+        for flavor, cutoffs in (('ac', ac_cutoffs), ('af', af_cutoffs))
+        for breakdown, breakdown_dict in (('by_case', {'ac': ac_cases,
+                                                       # 'af': af_cases
+                                                       }),
+                                          ('by', {
+                                              # 'ac': ac_total,
+                                              'af': af_total
+                                          })) if flavor in breakdown_dict
+        for metric, agg in (
+            ('lambda_gc', hl.methods.statgen._lambda_gc_agg(p_value_field)),
+            ('n_variants', hl.agg.count()),
+            ('n_sig', hl.agg.count_where(p_value_field < sig_threshold))
+        )
+    })).annotate_globals(ac_cutoffs=ac_cutoffs, af_cutoffs=af_cutoffs)
+
+    return mt.cols()
