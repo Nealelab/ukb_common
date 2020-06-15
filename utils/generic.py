@@ -1,6 +1,13 @@
 import hail as hl
 import uuid
 
+UKB_GNOMAD_POP_MAPPING = {'AFR': 'afr',
+                          'AMR': 'amr',
+                          'CSA': 'sas',
+                          'EAS': 'eas',
+                          'EUR': 'nfe_nwe',
+                          'MID': 'mid'}
+
 
 def pull_out_fields_from_entries(mt, shared_fields, index='rows'):
     func = mt.annotate_rows if index == 'rows' else mt.annotate_cols
