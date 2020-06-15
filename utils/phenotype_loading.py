@@ -516,26 +516,30 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
         hl.or_else(full_mt[sex], hl.float64(0.0)),
         full_mt[sex]) for sex in sexes})
 
-def load_dob_ht(pre_phesant_tsv_path):
-    dob_ht = hl.import_table(pre_phesant_tsv_path, impute=False, min_partitions=100, missing='', key='userId',
-                             types={'userId': hl.tint32, 'x54_0_0': hl.tint32})
-    year_field, month_field = dob_ht.x34_0_0, dob_ht.x52_0_0
+def load_dob_ht(pre_phesant_tsv_path, key_name = 'userId',
+                year_field = 'x34_0_0', month_field = 'x52_0_0', recruitment_center_field = 'x54_0_0', quote=None):
+    dob_ht = hl.import_table(pre_phesant_tsv_path, impute=False, min_partitions=100, missing='', key=key_name, quote=quote,
+                             types={key_name: hl.tint32, recruitment_center_field: hl.tint32})
+    year_field, month_field = dob_ht[year_field], dob_ht[month_field]
     month_field = hl.cond(hl.len(month_field) == 1, '0' + month_field, month_field)
     dob_ht = dob_ht.select(
         date_of_birth=hl.experimental.strptime(year_field + month_field + '15 00:00:00', '%Y%m%d %H:%M:%S', 'GMT'),
         month_of_birth=month_field,
         year_of_birth=year_field,
-        recruitment_center=dob_ht.x54_0_0
+        recruitment_center=dob_ht[recruitment_center_field]
     )
     return dob_ht
 
 
-def load_first_occurrence_data(first_exposure_and_activity_monitor_data_path, pre_phesant_tsv_path):
-    ht = hl.import_table(first_exposure_and_activity_monitor_data_path, delimiter=',', quote='"', missing='', impute=True, key='eid')  #, min_partitions=500)
+def load_first_occurrence_data(first_exposure_and_activity_monitor_data_path, pre_phesant_tsv_path, delimiter: str = ',',
+                               quote = '"'):
+    ht = hl.import_table(first_exposure_and_activity_monitor_data_path, delimiter=delimiter, quote=quote,
+                         missing='', impute=True, key='eid')  #, min_partitions=500)
     pseudo_dates = {'1901-01-01', '2037-07-07'}  # Pseudo date information at http://biobank.ctsu.ox.ac.uk/showcase/coding.cgi?id=819
-    mt = filter_and_annotate_ukb_data(ht, lambda k, v: k.startswith('13') and k.endswith('-0.0'), hl.str)
+    mt = filter_and_annotate_ukb_data(ht, lambda k, v: k.startswith('13') and len(k) == 10 and k.endswith('-0.0'), hl.str)
 
-    dob_ht = load_dob_ht(pre_phesant_tsv_path)[mt.row_key]
+    dob_ht = load_dob_ht(pre_phesant_tsv_path, 'eid', year_field='34-0.0', month_field='52-0.0',
+                         recruitment_center_field='54-0.0', quote=quote)[mt.row_key]
     dob = dob_ht.date_of_birth
     month = dob_ht.month_of_birth
 
@@ -555,6 +559,54 @@ def load_first_occurrence_data(first_exposure_and_activity_monitor_data_path, pr
     mt = mt.key_cols_by(trait_type='icd_first_occurrence',
                         phenocode=mt.phenocode, pheno_sex='both_sexes',
                         coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+    return mt
+
+
+def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, wave: str = '01'):
+    print(f'Loading COVID wave {wave}...')
+    covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid')
+    covid_ht = covid_ht.group_by('eid').aggregate(
+        origin=hl.agg.any(covid_ht.origin == 1),
+        result=hl.agg.any(covid_ht.result == 1)
+    )
+
+    # TODO: add aoo parse to separate trait_type (covid_quantitative?)
+    # dob = load_dob_ht(pre_phesant_tsv_path)[ht.key].date_of_birth
+    # ht = ht.annotate(aoo=hl.or_missing(ht.result == 1, hl.experimental.strptime(ht.specdate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT') - dob),
+    #                  specdate=hl.experimental.strptime(ht.specdate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT')).drop('specdate')
+
+    ht = all_samples_ht.annotate(**covid_ht[all_samples_ht.key])
+    centers = hl.literal(ENGLAND_RECRUITMENT_CENTERS)
+
+    analyses = {
+        'B1_v2': hl.or_missing(ht.result, ht.origin),  # fka ANA2
+        'C2_v2': hl.or_else(ht.result, False),  # fka ANA5
+        'C2_v2_england_controls': hl.or_missing(centers.contains(ht.recruitment_center),  # fka ANA5_england_controls
+                                               hl.or_else(ht.result, False)),
+        'C1_v2': ht.result,  # fka ANA5_strict
+        'B2_v2': hl.or_else(ht.result & ht.origin, False)  # fka ANA6
+    }
+    analysis_names = {
+        'B1_v2': 'Hospitalized vs non-hospitalized (among COVID-19 positive)',  # fka ANA2
+        'C2_v2': 'COVID-19 positive (controls include untested)',  # fka ANA5
+        'C2_v2_england_controls': 'COVID-19 positive (controls include untested), only patients from centers in England',  # fka ANA5_england_controls
+        'C1_v2': 'COVID-19 positive (controls only COVID-19 negative)',  # fka ANA5_strict
+        'B2_v2': 'Hospitalized vs non-hospitalized (controls include untested)'  # ANA6
+    }
+    assert set(analyses.keys()) == set(analysis_names.keys())
+
+    ht = ht.select(**analyses)
+    mt = filter_and_annotate_ukb_data(ht, lambda k, v: True, annotate_with_showcase=False,
+                                      format_col_name=lambda x: x)
+    mt = mt.key_cols_by(trait_type='categorical', phenocode='COVID19', pheno_sex='both_sexes',
+                        coding=mt.phenocode, modifier=wave)
+    mt = mt.annotate_cols(description=hl.literal(analysis_names)[mt.coding])
+
+    mt.annotate_cols(
+        n_cases=hl.agg.count_where(mt.value == 1.0),
+        n_controls=hl.agg.count_where(mt.value == 0.0)
+    ).cols().show()
+
     return mt
 
 
