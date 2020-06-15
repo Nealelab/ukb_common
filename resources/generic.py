@@ -33,7 +33,9 @@ PILOT_PHENOTYPES = set(map(lambda x: ('continuous', x, 'both_sexes', '', 'irnt')
      ('categorical', '1747', 'both_sexes', '4', ''),
      ('continuous', '30040', 'both_sexes', '', 'irnt'),
      ('continuous', '30890', 'both_sexes', '', ''),
-     ('prescriptions', 'HMG CoA reductase inhibitor|statin', 'both_sexes', '', '')})
+     ('prescriptions', 'HMG CoA reductase inhibitor|statin', 'both_sexes', '', ''),
+     ('icd_first_occurrence', '131494', 'both_sexes', '', ''),
+     ('icd_first_occurrence', '131306', 'both_sexes', '', '')})
 
 
 ENGLAND_RECRUITMENT_CENTERS = {
