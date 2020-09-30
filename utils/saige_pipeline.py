@@ -67,13 +67,14 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
                                                  'vcf.gz.tbi': f'{{root}}.vcf.gz.tbi'})
 
     output_file = f'{extract_task.bgz}.bgz' if not export_bgen else extract_task.out
-    command = f"""set -o pipefail; python3 {SCRIPT_DIR}/extract_vcf_from_mt.py
+    command = f"""set -o pipefail; PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell"
+    python3 {SCRIPT_DIR}/extract_vcf_from_mt.py
     --load_module {module}
     {"--additional_args " + additional_args if additional_args else ''}
     {"--gene " + gene if gene else ""}
     {"--interval " + interval if interval else ""}
     --groups "{','.join(groups)}"
-    --reference {reference}
+    --reference {reference} --n_threads {n_threads}
     {"--gene_map_ht_path " + gene_map_ht_path if gene_map_ht_path else ""} 
     {"--callrate_filter " + str(callrate_filter) if callrate_filter else ""} 
     {"--export_bgen" if export_bgen else ""}
