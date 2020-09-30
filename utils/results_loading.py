@@ -1,6 +1,10 @@
 import hail as hl
 from ukb_common.resources.generic import *
 
+AC_CUTOFFS = list(range(0, 6)) + [10, 20, 50, 100]
+AF_CUTOFFS = sorted([0] + [y * 10 ** x for y in (1, 2, 5) for x in range(-4, 0)] + [0.99])
+SIG_THRESHOLD = 5e-8
+
 
 def format_pheno_dir(pheno):
     return pheno.replace("/", "_")
@@ -31,7 +35,8 @@ def get_vep_formatted_data(ukb_vep_path: str, legacy_annotations: bool = False):
 
 def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extension: str = 'single.txt',
                       n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0,
-                      saige_version: str = 'NA', inv_normalized: str = 'NA', overwrite: bool = False, legacy_annotations: bool = False):
+                      saige_version: str = 'NA', inv_normalized: str = 'NA', overwrite: bool = False, legacy_annotations: bool = False,
+                      num_partitions: int = 1000):
     output_ht_path = f'{directory}/variant_results.ht'
     ht = hl.import_table(f'{directory}/*.{extension}', delimiter=' ', impute=True)
     print(f'Loading: {directory}/*.{extension} ...')
@@ -44,7 +49,7 @@ def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extensi
     if inv_normalized == 'NA': inv_normalized = hl.null(hl.tstr)
 
     ht = ht.key_by(locus=hl.parse_locus(locus_alleles[0]), alleles=locus_alleles[1].split('/'),
-                   **pheno_key_dict).distinct().naive_coalesce(50)
+                   **pheno_key_dict).distinct().naive_coalesce(num_partitions)
     if marker_id_col == 'SNPID':
         ht = ht.drop('CHR', 'POS', 'rsid', 'Allele1', 'Allele2')
     ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(
@@ -403,7 +408,10 @@ def recode_single_pkd_to_new(pheno_key_dict):
 
 
 def unify_saige_ht_variant_schema(ht):
-    shared = ('markerID', 'AC', 'AF', 'N', 'BETA', 'SE', 'Tstat', 'varT', 'varTstar')
+    if 'N' in list(ht.row):
+        shared = ('markerID', 'AC', 'AF', 'N', 'BETA', 'SE', 'Tstat', 'varT', 'varTstar')
+    else:
+        shared = ('markerID', 'AC', 'AF', 'BETA', 'SE')
     new_floats = ('AF.Cases', 'AF.Controls')
     new_ints = ('N.Cases', 'N.Controls')
     shared_end = ('Pvalue', 'gene', 'annotation')
@@ -479,33 +487,31 @@ def mwzj_hts_by_tree(all_hts, temp_dir, globals_for_col_key, debug=False, inner_
 
 
 def generate_lambda_ht_by_freq(mt):
-    ac_cutoffs = list(range(0, 6)) + [10, 20, 50, 100]
-    af_cutoffs = sorted([0] + [y * 10 ** x for y in (1, 2, 5) for x in range(-4, 0)] + [0.99])
-
     af_cases = mt['AF.Cases']
     ac_cases = af_cases * mt.n_cases * 2
-
     af_total = mt['AF_Allele2']
-    ac_total = af_total * 2 * (mt.n_cases + mt.n_controls)
     p_value_field = mt.Pvalue
+    breakdown_dict_tuple = (('by_case', {'ac': ac_cases}), ('by', {'af': af_total}))
+    mt = mt.annotate_cols(sumstats_qc=generate_qc_lambda_aggregator(breakdown_dict_tuple, p_value_field)).annotate_globals(ac_cutoffs=AC_CUTOFFS, af_cutoffs=AF_CUTOFFS)
+    return mt.cols()
 
-    sig_threshold = 5e-8
 
-    mt = mt.annotate_cols(sumstats_qc=hl.struct(**{
+def generate_qc_lambda_aggregator(breakdown_dict_tuple, p_value_field):
+    return hl.struct(**{
         f'{metric}_{breakdown}_{flavor}': [hl.agg.filter(breakdown_dict[flavor] >= cutoff, agg) for cutoff in cutoffs]
-        for flavor, cutoffs in (('ac', ac_cutoffs), ('af', af_cutoffs))
-        for breakdown, breakdown_dict in (('by_case', {'ac': ac_cases,
-                                                       # 'af': af_cases
-                                                       }),
-                                          ('by', {
-                                              # 'ac': ac_total,
-                                              'af': af_total
-                                          })) if flavor in breakdown_dict
+        for flavor, cutoffs in (('ac', AC_CUTOFFS), ('af', AF_CUTOFFS))
+        for breakdown, breakdown_dict in breakdown_dict_tuple if flavor in breakdown_dict
         for metric, agg in (
             ('lambda_gc', hl.methods.statgen._lambda_gc_agg(p_value_field)),
             ('n_variants', hl.agg.count()),
-            ('n_sig', hl.agg.count_where(p_value_field < sig_threshold))
+            ('n_sig', hl.agg.count_where(p_value_field < SIG_THRESHOLD))
         )
-    })).annotate_globals(ac_cutoffs=ac_cutoffs, af_cutoffs=af_cutoffs)
+    })
 
-    return mt.cols()
+
+def explode_lambda_ht(ht, by='ac'):
+    ac_ht = ht.annotate(sumstats_qc=ht.sumstats_qc.select(*[x for x in ht.sumstats_qc.keys() if f'_{by}' in x]))
+    ac_ht = ac_ht.annotate(index_ac=hl.zip_with_index(ac_ht[f'{by}_cutoffs'])).explode('index_ac')
+    ac_ht = ac_ht.transmute(**{by: ac_ht.index_ac[1]},
+                            **{x: ac_ht.sumstats_qc[x][ac_ht.index_ac[0]] for x in ac_ht.sumstats_qc})
+    return ac_ht
