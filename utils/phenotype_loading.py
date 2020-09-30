@@ -413,8 +413,7 @@ def format_entries(field, sex_field):
     )
 
 
-def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, truncated_codes_only: bool = True,
-                                  custom_data_categorical: bool = True):
+def combine_pheno_files_multi_sex_legacy(pheno_file_dict: dict, cov_ht: hl.Table, truncated_codes_only: bool = True):
     full_mt: hl.MatrixTable = None
     sexes = ('both_sexes', 'females', 'males')
 
@@ -450,7 +449,8 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
             mt = mt.select_entries(**format_entries(mt.value, mt.sex))
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(
                 hl.cond(mt.trait_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
-            ) for sex in sexes}, description=NULL_STR, description_more=NULL_STR, coding_description=NULL_STR, category=mt.category)
+            ) for sex in sexes}, **{extra_col: mt[extra_col] if extra_col in list(mt.col) else NULL_STR
+                                    for extra_col in PHENO_DESCRIPTION_FIELDS})
         elif data_type == 'additional':
             mt = mt.key_cols_by(trait_type='continuous', phenocode=mt.pheno, pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=mt.coding)
             mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
@@ -491,7 +491,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
                                 category=mt.meaning)
             mt = mt.select_entries(**format_entries(mt.any_codes, mt.sex))
         elif data_type == 'icd_first_occurrence':
-            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_entries(**format_entries(hl.is_defined(mt.value), mt.sex))
             mt = mt.select_cols(**compute_cases_binary(hl.is_defined(mt.both_sexes), mt.sex),
                                 description=mt.Field, description_more=mt.Notes,
                                 coding_description=NULL_STR, category=mt.Path)
@@ -507,7 +507,86 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
         if full_mt is None:
             full_mt = mt
         else:
-            full_mt = full_mt.union_cols(mt, row_join_type='outer' if data_type == 'prescriptions' else 'inner')
+            full_mt = full_mt.union_cols(mt, row_join_type='left')
+            # full_mt = full_mt.union_cols(mt, row_join_type='outer' if data_type == 'prescriptions' else 'inner')
+    full_mt = full_mt.unfilter_entries()
+
+    # Here because prescription data was smaller than the others (so need to set the missing samples to 0)
+    return full_mt.select_entries(**{sex: hl.cond(
+        full_mt.trait_type == 'prescriptions',
+        hl.or_else(full_mt[sex], hl.float64(0.0)),
+        full_mt[sex]) for sex in sexes})
+
+
+
+# TODO: move most of this into load functions
+def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, truncated_codes_only: bool = True):
+    full_mt: hl.MatrixTable = None
+    sexes = ('both_sexes', 'females', 'males')
+
+    def counting_func(value, trait_type):
+        return value if trait_type == 'categorical' else hl.is_defined(value)
+
+    for data_type, mt in pheno_file_dict.items():
+        mt = mt.select_rows(**cov_ht[mt.row_key])
+        print(data_type)
+        if data_type == 'custom':
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(
+                hl.cond(mt.trait_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
+            ) for sex in sexes}, **{extra_col: mt[extra_col] if extra_col in list(mt.col) else NULL_STR
+                                    for extra_col in PHENO_DESCRIPTION_FIELDS})
+        elif data_type in ('categorical', 'continuous'):
+
+            def get_non_missing_field(mt, field_name):
+                return hl.coalesce(*[mt[f'{sex}_pheno'][field_name] for sex in sexes])
+
+            mt = mt.select_cols(**compute_cases_binary(counting_func(mt.both_sexes, data_type), mt.sex),
+                                # **{f'n_cases_{sex}': hl.agg.count_where(counting_func(mt[sex], mt.trait_type)) for sex in sexes},
+                                description=get_non_missing_field(mt, 'Field'),
+                                description_more=get_non_missing_field(mt, 'Notes'),
+                                coding_description=get_non_missing_field(mt, 'meaning') if
+                                data_type == 'categorical' else NULL_STR,
+                                category=get_non_missing_field(mt, 'Path'))
+            mt = mt.select_entries(**{sex: hl.float64(mt[sex]) for sex in sexes})
+
+        # TODO: got here - move some of this to ICD load (get icd_version as icd10 and move truncation steps there)
+        elif 'icd_code' in list(mt.col_key):
+            icd_version = mt.icd_version if 'icd_version' in list(mt.col) else 'icd10'
+            mt = mt.key_cols_by(trait_type=icd_version, phenocode=mt.icd_code, pheno_sex='both_sexes',
+                                coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+            if truncated_codes_only:
+                mt = mt.filter_cols(hl.len(mt.icd_code) == 3)
+                mt = mt.collect_cols_by_key()
+                mt = mt.annotate_cols(keep=hl.if_else(
+                    hl.len(mt.truncated) == 1, 0,
+                    hl.zip_with_index(mt.truncated).filter(lambda x: x[1]).map(lambda x: x[0])[0]))
+                mt = mt.select_entries(**{x: mt[x][mt.keep] for x in mt.entry})
+                mt = mt.select_cols(**{x: mt[x][mt.keep] for x in mt.col_value if x != 'keep'})
+            mt = mt.select_cols(**compute_cases_binary(mt.any_codes, mt.sex),
+                                description=mt.short_meaning,
+                                description_more="truncated: " + hl.str(mt.truncated) if 'truncated' in list(mt.col_value) else NULL_STR,
+                                coding_description=NULL_STR,
+                                category=mt.meaning)
+            mt = mt.select_entries(**format_entries(mt.any_codes, mt.sex))
+        elif data_type == 'icd_first_occurrence':
+            mt = mt.select_entries(**format_entries(hl.is_defined(mt.value), mt.sex))
+            mt = mt.select_cols(**compute_cases_binary(mt.both_sexes == 1.0, mt.sex),
+                                description=mt.Field, description_more=mt.Notes,
+                                coding_description=NULL_STR, category=mt.Path)
+        else: # 'biomarkers', 'activity_monitor'
+            mt = mt.key_cols_by(trait_type=mt.trait_type if 'trait_type' in list(mt.col) else data_type,
+                                phenocode=hl.str(mt.pheno), pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=NULL_STR_KEY)
+            mt = mt.select_entries(**format_entries(mt.value, mt.sex))
+            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(hl.is_defined(mt[sex])) for sex in sexes},
+                                description=mt.Field, description_more=NULL_STR, coding_description=NULL_STR, category=mt.Path)
+        # else:
+        #     raise ValueError('pheno or icd_code not in column key. New data type?')
+        mt = mt.checkpoint(tempfile.mktemp(prefix=f'/tmp/{data_type}_', suffix='.mt'))
+        if full_mt is None:
+            full_mt = mt
+        else:
+            full_mt = full_mt.union_cols(mt, row_join_type='outer')
     full_mt = full_mt.unfilter_entries()
 
     # Here because prescription data was smaller than the others (so need to set the missing samples to 0)
@@ -567,7 +646,8 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, wave: str = 
     covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid')
     covid_ht = covid_ht.group_by('eid').aggregate(
         origin=hl.agg.any(covid_ht.origin == 1),
-        result=hl.agg.any(covid_ht.result == 1)
+        result=hl.agg.any(covid_ht.result == 1),
+        inpatient=hl.agg.any(covid_ht.reqorg == 1),
     )
 
     # TODO: add aoo parse to separate trait_type (covid_quantitative?)
@@ -579,19 +659,23 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, wave: str = 
     centers = hl.literal(ENGLAND_RECRUITMENT_CENTERS)
 
     analyses = {
-        'B1_v2': hl.or_missing(ht.result, ht.origin),  # fka ANA2
+        'B1_v2': hl.or_missing(ht.result, ht.inpatient),  # fka ANA2
+        'B1_v2_origin': hl.or_missing(ht.result, ht.origin),  # fka ANA2
         'C2_v2': hl.or_else(ht.result, False),  # fka ANA5
         'C2_v2_england_controls': hl.or_missing(centers.contains(ht.recruitment_center),  # fka ANA5_england_controls
                                                hl.or_else(ht.result, False)),
         'C1_v2': ht.result,  # fka ANA5_strict
-        'B2_v2': hl.or_else(ht.result & ht.origin, False)  # fka ANA6
+        'B2_v2': hl.or_else(ht.result & ht.inpatient, False),  # fka ANA6
+        'B2_v2_origin': hl.or_else(ht.result & ht.origin, False)  # fka ANA6
     }
     analysis_names = {
         'B1_v2': 'Hospitalized vs non-hospitalized (among COVID-19 positive)',  # fka ANA2
+        'B1_v2_origin': 'Hospitalized vs non-hospitalized (among COVID-19 positive; old definition using "origin" field)',  # fka ANA2
         'C2_v2': 'COVID-19 positive (controls include untested)',  # fka ANA5
         'C2_v2_england_controls': 'COVID-19 positive (controls include untested), only patients from centers in England',  # fka ANA5_england_controls
         'C1_v2': 'COVID-19 positive (controls only COVID-19 negative)',  # fka ANA5_strict
-        'B2_v2': 'Hospitalized vs non-hospitalized (controls include untested)'  # ANA6
+        'B2_v2': 'Hospitalized vs non-hospitalized (controls include untested)',  # ANA6
+        'B2_v2_origin': 'Hospitalized vs non-hospitalized (controls include untested; old definition using "origin" field)'  # ANA6
     }
     assert set(analyses.keys()) == set(analysis_names.keys())
 
