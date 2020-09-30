@@ -15,7 +15,7 @@ def gt_to_gp(mt, location: str = 'GP'):
 
 
 def impute_missing_gp(mt, location: str = 'GP', mean_impute: bool = True):
-    mt = mt.annotate_entries(_gp = mt.location)
+    mt = mt.annotate_entries(_gp = mt[location])
     if mean_impute:
         mt = mt.annotate_rows(_mean_gp=hl.agg.array_agg(lambda x: hl.agg.mean(x), mt._gp))
         gp_expr = mt._mean_gp
@@ -67,6 +67,7 @@ def main(args):
 
     if args.export_bgen:
         if not args.input_bgen:
+            mt = mt.annotate_entries(GT=hl.if_else(mt.GT.is_haploid(), hl.call(mt.GT[0], mt.GT[0]), mt.GT))
             mt = gt_to_gp(mt)
             mt = impute_missing_gp(mt, mean_impute=args.mean_impute_missing)
         hl.export_bgen(mt, args.output_file, gp=mt.GP, varid=mt.rsid)
