@@ -641,7 +641,7 @@ def load_first_occurrence_data(first_exposure_and_activity_monitor_data_path, pr
     return mt
 
 
-def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_path: str,hes_diag_path: str, death_path: str, wave: str = '01'):
+def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_path: str, hes_diag_path: str, death_path: str, wave: str = '01'):
     print(f'Loading COVID wave {wave}...')
 
     #### PATH OF DATA USED IN TESTING ####
@@ -656,45 +656,41 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
 
     # def get_death_data_path(wave: str = '20201012'):
     #     return f'gs://ukb31063/ukb31063.death.{wave}.txt'
+
     covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid')
     hes_main_ht = hl.import_table(hes_main_path, delimiter='\t', missing='', impute=True, key='eid')
     hes_diag_ht = hl.import_table(hes_diag_path, delimiter='\t', missing='', impute=True, key='eid')
-    death_ht = hl.import_table(hes_death_path, delimiter='\t', missing='', impute=True, key='eid')
-    
-    ## Death Register Data Cleaning
-    death_ht = death_ht.annotate(death_date = hl.experimental.strptime(death_ht.date_of_death+ ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))
-    ## HES Inpatient Data Cleaning
-    hes_main_ht = hes_main_ht.annotate(diagdate = hl.or_else(hes_main_ht.epistart,hes_main_ht.admidate))
-    hes_main_ht = hes_main_ht.annotate(diag_date = hl.experimental.strptime(hes_main_ht.diagdate+ ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))
-    hes_main_ht = hes_main_ht.annotate(admi_date = hl.experimental.strptime(hes_main_ht.admidate+ ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))
-    
-    hes_ht = hes_main_ht.key_by("eid","ins_index").join(hes_diag_ht.key_by("eid","ins_index"))#Join HES Inpatient Tables
-    
-    hes_pcr_pos = hes_ht.filter(hes_ht.diag_icd10=="U071").key_by("eid") # Subset Patients with Positive PCR Test Results
-    hes_other = hes_ht.filter((hes_ht.diag_icd10!="U071")&(hes_ht.diag_icd10!="U072")).key_by("eid")# Subset Patients with diagnoses not related to PCR Test
-    hes_pcr_pos = hes_pcr_pos.annotate(pcr_result=True)
-    hes_pcr_pos = hes_pcr_pos.select(hes_pcr_pos.diag_date,hes_pcr_pos.pcr_result)# Select required Date info
-    hes_other = hes_other.select(hes_other.admi_date)# Select required Date info
-    hes_ht2 = hes_other.key_by("eid").join(hes_pcr_pos.key_by("eid"),how="outer") # Rejoin the 2 subgroups
-    
-    hes_death_ht = hes_ht2.key_by("eid").join(death_ht.key_by("eid"),how="outer") # Join Death Register Data to HES Info
-    hes_death_ht = hes_death_ht.annotate(inpatient2 = (hes_death_ht.admi_date>hes_death_ht.diag_date)) # Compare PCR-Date to Hospitalization-Date
-    hes_death_ht = hes_death_ht.annotate(death = (hes_death_ht.death_date>hes_death_ht.diag_date))# Compare PCR-Date to Death-Date
-    
-    hes_death_ht = hes_death_ht.group_by("eid").aggregate(inpatient2 = hl.agg.any(hes_death_ht.inpatient2),
-                                                          death = hl.agg.any(hes_death_ht.death),
-                                                          pcr_result = hl.agg.any(hes_death_ht.pcr_result),) # Summarize Statistics
-    
+    death_ht = hl.import_table(death_path, delimiter='\t', missing='', impute=True, key='eid')
+
+    death_ht = death_ht.annotate(death_date=hl.experimental.strptime(death_ht.date_of_death + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))  # Add Time Info to Death Register Data
+    hes_main_ht = hes_main_ht.annotate(diagdate=hl.or_else(hes_main_ht.epistart, hes_main_ht.admidate))
+    hes_main_ht = hes_main_ht.annotate(diag_date=hl.experimental.strptime(hes_main_ht.diagdate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'),
+                                       admi_date=hl.experimental.strptime(hes_main_ht.admidate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))  # Add Time Info to HES Inpatient Data
+
+    hes_ht = hes_main_ht.key_by("eid", "ins_index").join(hes_diag_ht.key_by("eid", "ins_index"))  # Join HES Inpatient Tables
+    hes_pcr_pos = hes_ht.filter(hes_ht.diag_icd10 == "U071").key_by("eid")  # Subset Patients with Positive PCR Test Results
+    hes_other = hes_ht.filter((hes_ht.diag_icd10 != "U071") & (hes_ht.diag_icd10 != "U072")).key_by("eid")  # Subset Patients with diagnoses not related to PCR Test
+    hes_pcr_pos = hes_pcr_pos.select('diag_date', pcr_result=True)  # Select PCR-Positive Date info
+    hes_other = hes_other.select('admi_date')  # Select Admission Date info
+    hes_ht = hes_other.key_by("eid").join(hes_pcr_pos.key_by("eid"), how="outer")  # Rejoin the 2 subgroups
+
+    hes_death_ht = hes_ht.key_by("eid").join(death_ht.key_by("eid"), how="outer")  # Join Death Register Data to HES Info
+    hes_death_ht = hes_death_ht.annotate(inpatient2=hes_death_ht.admi_date > hes_death_ht.diag_date,
+                                         death=hes_death_ht.death_date > hes_death_ht.diag_date)  # Compare PCR-Positive Date to Death Date and Admission Date
+    hes_death_ht = hes_death_ht.group_by("eid").aggregate(inpatient2=hl.agg.any(hes_death_ht.inpatient2),
+                                                          death=hl.agg.any(hes_death_ht.death),
+                                                          pcr_result=hl.agg.any(hes_death_ht.pcr_result),
+    )
+
     covid_ht = covid_ht.group_by('eid').aggregate(
         origin=hl.agg.any(covid_ht.origin == 1),
         result1=hl.agg.any(covid_ht.result == 1),
         inpatient1=hl.agg.any(covid_ht.reqorg == 1),
     )
+    covid_ht = covid_ht.key_by("eid").join(hes_death_ht.key_by("eid"), how="outer")
+    covid_ht = covid_ht.annotate(inpatient=covid_ht.inpatient1 | covid_ht.inpatient2,
+                                 result=covid_ht.result1 | covid_ht.pcr_result)
     
-    covid_ht = covid_ht.key_by("eid").join(hes_death_ht.key_by("eid"),how="outer")
-    covid_ht= covid_ht.annotate(inpatient = (covid_ht.inpatient1)|(covid_ht.inpatient2),
-                               result = (covid_ht.result1)|(covid_ht.pcr_result))
-
     # TODO: add aoo parse to separate trait_type (covid_quantitative?)
     # dob = load_dob_ht(pre_phesant_tsv_path)[ht.key].date_of_birth
     # ht = ht.annotate(aoo=hl.or_missing(ht.result == 1, hl.experimental.strptime(ht.specdate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT') - dob),
