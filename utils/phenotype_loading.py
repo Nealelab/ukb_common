@@ -641,15 +641,55 @@ def load_first_occurrence_data(first_exposure_and_activity_monitor_data_path, pr
     return mt
 
 
-def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, wave: str = '01'):
+def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_path: str, hes_diag_path: str, death_path: str, wave: str = '01'):
     print(f'Loading COVID wave {wave}...')
+
+    #### PATH OF DATA USED IN TESTING ####
+    # def get_covid_data_path(wave: str = '20201103'):
+    #     return f'gs://ukb31063/ukb31063.covid19_test_result.{wave}.txt'
+
+    # def get_hes_main_data_path(wave: str = '20200909'):
+    #     return f'gs://ukb31063/ukb31063.hesin.{wave}.txt'
+
+    # def get_hes_diag_data_path(wave: str = '20200909'):
+    #     return f'gs://ukb31063/ukb31063.hesin_diag.{wave}.txt'
+
+    # def get_death_data_path(wave: str = '20201012'):
+    #     return f'gs://ukb31063/ukb31063.death.{wave}.txt'
+
     covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid')
-    covid_ht = covid_ht.group_by('eid').aggregate(
-        origin=hl.agg.any(covid_ht.origin == 1),
-        result=hl.agg.any(covid_ht.result == 1),
-        inpatient=hl.agg.any(covid_ht.reqorg == 1),
+    hes_main_ht = hl.import_table(hes_main_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'))
+    hes_diag_ht = hl.import_table(hes_diag_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'))
+    death_ht = hl.import_table(death_path, delimiter='\t', missing='', impute=True, key='eid')
+
+    death_ht = death_ht.annotate(death_date=hl.experimental.strptime(death_ht.date_of_death + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))  # Add Time Info to Death Register Data
+    hes_main_ht = hes_main_ht.annotate(diagdate=hl.or_else(hes_main_ht.epistart, hes_main_ht.admidate))
+    hes_main_ht = hes_main_ht.annotate(diag_date=hl.experimental.strptime(hes_main_ht.diagdate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'),
+                                       admi_date=hl.experimental.strptime(hes_main_ht.admidate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))  # Add Time Info to HES Inpatient Data
+
+    hes_ht = hes_main_ht.join(hes_diag_ht)  # Join HES Inpatient Tables
+    hes_pcr_pos = hes_ht.filter(hes_ht.diag_icd10 == 'U071')  # Subset Patients with Positive PCR Test Results
+    hes_pcr_pos = hes_pcr_pos.select(covid_diag_date=hes_pcr_pos.diag_date, pcr_result=True)  # Select PCR-Positive Date info
+    hes_ht = hes_ht.select('admi_date', 'diag_icd10')  # Select Admission Date and Diagnoses Info
+    hes_ht = hes_ht.key_by('eid').join(hes_pcr_pos.key_by('eid'), how='outer')  # Create PCR-Positive information for all diagnoses
+
+    hes_death_ht = hes_ht.join(death_ht, how='outer')  # Join Death Register Data to HES Info
+    hes_death_ht = hes_death_ht.annotate(inpatient2=hes_death_ht.admi_date >= hes_death_ht.covid_diag_date,
+                                         death=hes_death_ht.death_date >= hes_death_ht.covid_diag_date)  # Compare PCR-Positive Date to Death Date and Admission Date
+    hes_death_ht = hes_death_ht.group_by('eid').aggregate(inpatient2=hl.agg.any(hes_death_ht.inpatient2),
+                                                          death=hl.agg.any(hes_death_ht.death),
+                                                          pcr_result=hl.agg.any(hes_death_ht.pcr_result),
     )
 
+    covid_ht = covid_ht.group_by('eid').aggregate(
+        origin=hl.agg.any(covid_ht.origin == 1),
+        result1=hl.agg.any(covid_ht.result == 1),
+        inpatient1=hl.agg.any(covid_ht.reqorg == 1),
+    )
+    covid_ht = covid_ht.join(hes_death_ht, how='outer')
+    covid_ht = covid_ht.annotate(inpatient=covid_ht.inpatient1 | covid_ht.inpatient2,
+                                 result=covid_ht.result1 | covid_ht.pcr_result)
+    
     # TODO: add aoo parse to separate trait_type (covid_quantitative?)
     # dob = load_dob_ht(pre_phesant_tsv_path)[ht.key].date_of_birth
     # ht = ht.annotate(aoo=hl.or_missing(ht.result == 1, hl.experimental.strptime(ht.specdate + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT') - dob),
@@ -659,6 +699,7 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, wave: str = 
     centers = hl.literal(ENGLAND_RECRUITMENT_CENTERS)
 
     analyses = {
+	'A2_v2': hl.or_else(ht.death, False)
         'B1_v2': hl.or_missing(ht.result, ht.inpatient),  # fka ANA2
         'B1_v2_origin': hl.or_missing(ht.result, ht.origin),  # fka ANA2
         'C2_v2': hl.or_else(ht.result, False),  # fka ANA5
@@ -669,6 +710,7 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, wave: str = 
         'B2_v2_origin': hl.or_else(ht.result & ht.origin, False)  # fka ANA6
     }
     analysis_names = {
+	'A2_v2': 'Death vs Survival (among COVID-19 positive)'
         'B1_v2': 'Hospitalized vs non-hospitalized (among COVID-19 positive)',  # fka ANA2
         'B1_v2_origin': 'Hospitalized vs non-hospitalized (among COVID-19 positive; old definition using "origin" field)',  # fka ANA2
         'C2_v2': 'COVID-19 positive (controls include untested)',  # fka ANA5
