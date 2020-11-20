@@ -699,6 +699,7 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
     centers = hl.literal(ENGLAND_RECRUITMENT_CENTERS)
 
     analyses = {
+	'A2_v2': hl.or_else(ht.death, False)
         'B1_v2': hl.or_missing(ht.result, ht.inpatient),  # fka ANA2
         'B1_v2_origin': hl.or_missing(ht.result, ht.origin),  # fka ANA2
         'C2_v2': hl.or_else(ht.result, False),  # fka ANA5
@@ -709,6 +710,7 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
         'B2_v2_origin': hl.or_else(ht.result & ht.origin, False)  # fka ANA6
     }
     analysis_names = {
+	'A2_v2': 'Death vs Survival (among COVID-19 positive)'
         'B1_v2': 'Hospitalized vs non-hospitalized (among COVID-19 positive)',  # fka ANA2
         'B1_v2_origin': 'Hospitalized vs non-hospitalized (among COVID-19 positive; old definition using "origin" field)',  # fka ANA2
         'C2_v2': 'COVID-19 positive (controls include untested)',  # fka ANA5
