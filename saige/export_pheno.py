@@ -21,7 +21,12 @@ def main(args):
         add_args = args.additional_args.split(',')
     mt = getattr(load_module, args.load_mt_function)(*add_args)
 
-    mt = mt.filter_cols(hl.all(lambda x: x, [mt[k] == getattr(args, k, False) for k in PHENO_KEY_FIELDS]))
+    mt = mt.filter_cols(hl.all(lambda x: x, [mt[k] == getattr(args, k, False) for k in PHENO_KEY_FIELDS if k != 'pheno_sex']))
+    pheno_sex_mt = mt.filter_cols(mt.pheno_sex == args.pheno_sex)
+    if pheno_sex_mt.count_cols() == 1:
+        mt = pheno_sex_mt
+    else:
+        mt = mt.filter_cols(mt.pheno_sex == 'both_sexes')
     mt = mt.select_entries(value=mt[args.pheno_sex])
     if args.binary_trait:
         mt = mt.select_entries(value=hl.int(mt.value))
