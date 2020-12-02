@@ -49,6 +49,7 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
                         gene: str = None, interval: str = None, groups=None, gene_map_ht_path: str = None,
                         set_missing_to_hom_ref: bool = False, callrate_filter: float = 0.0, adj: bool = True,
                         export_bgen: bool = True, input_dosage: bool = False, reference: str = 'GRCh38',
+                        gene_ht_interval: str = None,
                         n_threads: int = 8, storage: str = '500Mi', additional_args: str = '', memory: str = ''):
     if groups is None:
         # groups = {'pLoF', 'missense|LC', 'pLoF|missense|LC', 'synonymous'}
@@ -73,6 +74,7 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
     {"--additional_args " + additional_args if additional_args else ''}
     {"--gene " + gene if gene else ""}
     {"--interval " + interval if interval else ""}
+    {"--gene_ht_interval " + gene_ht_interval if gene_ht_interval else ""}
     --groups "{','.join(groups)}"
     --reference {reference} --n_threads {n_threads}
     {"--gene_map_ht_path " + gene_map_ht_path if gene_map_ht_path else ""} 
@@ -91,6 +93,7 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
         command += f'\nmv {extract_task.bgz}.bgz {extract_task.out["vcf.gz"]}; tabix {extract_task.out["vcf.gz"]};'
     extract_task.command(command.replace('\n', ' '))
 
+    activate_service_account(extract_task)
     p.write_output(extract_task.out, output_root)
     if gene_map_ht_path:
         p.write_output(extract_task.group_file, f'{output_root}.gene.txt')
@@ -112,12 +115,16 @@ def export_pheno(p: Batch, output_path: str, pheno_keys, module: str,
     --output_file {extract_task.out}
     --n_threads {n_threads} | tee {extract_task.stdout}
     ; """.replace('\n', ' ')
-
+    activate_service_account(extract_task)
     extract_task.command(python_command)
 
     p.write_output(extract_task.out, output_path)
     p.write_output(extract_task.stdout, f'{output_path}.log')
     return extract_task
+
+
+def activate_service_account(task):
+    task.env('GOOGLE_APPLICATION_CREDENTIALS', '/gsa-key/key.json')
 
 
 def fit_null_glmm(p: Batch, output_root: str, pheno_file: Resource, trait_type: str, covariates: str,
@@ -256,6 +263,7 @@ def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold
     python_command = python_command.replace('\n', '; ').strip()
     command = f'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell" ' + python_command
     load_data_task.command(command)
+    activate_service_account(load_data_task)
     p.write_output(load_data_task.stdout, f'{output_root}/{pheno_keys["phenocode"]}_loading.log')
     return load_data_task
 
@@ -274,6 +282,7 @@ def qq_plot_results(p: Batch, output_root: str, tasks_to_hold, export_docker_ima
 
     command = f'set -o pipefail; PYTHONPATH=$PYTHONPATH:/ PYSPARK_SUBMIT_ARGS="--conf spark.driver.memory={int(3 * n_threads)}g pyspark-shell" ' + python_command
     qq_export_task.command(command)
+    activate_service_account(qq_export_task)
 
     qq_task: Job = p.new_job(name='qq_plot').image(R_docker_image).cpu(n_threads).storage(storage).always_run()
     qq_task.declare_resource_group(result={ext: f'{{root}}_Pvalue_{ext}'

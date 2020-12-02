@@ -44,7 +44,7 @@ def main(args):
             gene_ht = gene_ht.filter(gene_ht.gene_symbol == args.gene)
             interval = gene_ht.aggregate(hl.agg.take(gene_ht.interval, 1), _localize=False)
         else:
-            interval = [hl.parse_locus_interval(args.interval)]
+            interval = [hl.parse_locus_interval(args.gene_ht_interval)]
             gene_ht = hl.filter_intervals(gene_ht, interval)
 
         gene_ht = gene_ht.filter(hl.set(args.groups.split(',')).contains(gene_ht.annotation))
@@ -88,6 +88,7 @@ if __name__ == '__main__':
     parser.add_argument('--groups', help='Which variant groupings to use')
     parser.add_argument('--gene', help='Gene to export')
     parser.add_argument('--interval', help='Interval to export')
+    parser.add_argument('--gene_ht_interval', help='Interval to export')
 
     parser.add_argument('--input_bgen', help='Input is BGEN instead of MT', action='store_true')
     parser.add_argument('--no_adj', help='Use all genotypes instead of only high-quality ones', action='store_true')
