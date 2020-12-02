@@ -657,10 +657,10 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
     # def get_death_data_path(wave: str = '20201012'):
     #     return f'gs://ukb31063/ukb31063.death.{wave}.txt'
 
-    covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid')
-    hes_main_ht = hl.import_table(hes_main_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'))
-    hes_diag_ht = hl.import_table(hes_diag_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'))
-    death_ht = hl.import_table(death_path, delimiter='\t', missing='', impute=True, key='eid')
+    covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid', min_partitions=100)
+    hes_main_ht = hl.import_table(hes_main_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'), min_partitions=100)
+    hes_diag_ht = hl.import_table(hes_diag_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'), min_partitions=100)
+    death_ht = hl.import_table(death_path, delimiter='\t', missing='', impute=True, key='eid', min_partitions=100)
 
     death_ht = death_ht.annotate(death_date=hl.experimental.strptime(death_ht.date_of_death + ' 00:00:00', '%d/%m/%Y %H:%M:%S', 'GMT'))  # Add Time Info to Death Register Data
     hes_main_ht = hes_main_ht.annotate(diagdate=hl.or_else(hes_main_ht.epistart, hes_main_ht.admidate))
