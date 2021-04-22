@@ -1,5 +1,5 @@
 import hail as hl
-from ukb_common.resources.generic import *
+from ukbb_common.resources.generic import *
 
 AC_CUTOFFS = list(range(0, 6)) + [10, 20, 50, 100]
 AF_CUTOFFS = sorted([0] + [y * 10 ** x for y in (1, 2, 5) for x in range(-4, 0)] + [0.99])
