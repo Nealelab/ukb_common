@@ -3,7 +3,7 @@ import subprocess
 import os
 import tempfile
 import hail as hl
-from ukb_common.resources.generic import *
+from ukbb_common.resources.generic import *
 
 NULL_STR_KEY = ''
 NULL_STR = hl.null(hl.tstr)
