@@ -8,7 +8,7 @@ PHENO_KEY_FIELDS = ('trait_type', 'phenocode', 'pheno_sex', 'coding', 'modifier'
 
 
 MKL_OFF = 'export MKL_NUM_THREADS=1; export MKL_DYNAMIC=false; export OMP_NUM_THREADS=1; export OMP_DYNAMIC=false; '
-SCRIPT_DIR = '/ukb_common/saige'
+SCRIPT_DIR = '/ukbb_common/saige'
 # TODO: add binary_trait annotation to input table and remove this:
 saige_pheno_types = {
     'continuous': 'quantitative',

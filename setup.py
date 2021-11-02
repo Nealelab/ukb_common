@@ -17,10 +17,10 @@ setuptools.setup(
     description="Common functions for UK Biobank Data",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Nealelab/ukb_common",
+    url="https://github.com/Nealelab/ukbb_common",
     project_urls={
-        "Source Code": "https://github.com/Nealelab/ukb_common",
-        "Issues": "https://github.com/Nealelab/ukb_common/issues",
+        "Source Code": "https://github.com/Nealelab/ukbb_common",
+        "Issues": "https://github.com/Nealelab/ukbb_common/issues",
     },
     classifiers=[
         "Topic :: Scientific/Engineering :: Bio-Informatics",
