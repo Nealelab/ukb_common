@@ -1,2 +1,2 @@
-from ukb_common.resources.generic import *
-from ukb_common.resources.results import *
+from ukbb_common.resources.generic import *
+from ukbb_common.resources.results import *

@@ -1,2 +1,2 @@
-from ukbb_common.utils import *
-from ukbb_common.resources import *
+from .utils import *
+from .resources import *

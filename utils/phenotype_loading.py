@@ -645,8 +645,8 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
     print(f'Loading COVID wave {wave}...')
 
     #### PATH OF DATA USED IN TESTING ####
-    # def get_covid_data_path(wave: str = '20201103'):
-    #     return f'gs://ukb31063/ukb31063.covid19_test_result.{wave}.txt'
+    # def get_covid_data_path(wave: str = '20200724', region: str = 'england'):
+    #     return f'gs://ukb31063/ukb31063.covid19_result_{region}.{wave}.txt'
 
     # def get_hes_main_data_path(wave: str = '20200909'):
     #     return f'gs://ukb31063/ukb31063.hesin.{wave}.txt'
@@ -658,6 +658,7 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
     #     return f'gs://ukb31063/ukb31063.death.{wave}.txt'
 
     covid_ht = hl.import_table(covid_data_path, delimiter='\t', missing='', impute=True, key='eid', min_partitions=100)
+
     hes_main_ht = hl.import_table(hes_main_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'), min_partitions=100)
     hes_diag_ht = hl.import_table(hes_diag_path, delimiter='\t', missing='', impute=True, key=('eid', 'ins_index'), min_partitions=100)
     death_ht = hl.import_table(death_path, delimiter='\t', missing='', impute=True, key='eid', min_partitions=100)
@@ -674,8 +675,10 @@ def load_covid_data(all_samples_ht: hl.Table, covid_data_path: str, hes_main_pat
     hes_ht = hes_ht.key_by('eid').join(hes_pcr_pos.key_by('eid'), how='outer')  # Create PCR-Positive information for all diagnoses
 
     hes_death_ht = hes_ht.join(death_ht, how='outer')  # Join Death Register Data to HES Info
-    hes_death_ht = hes_death_ht.annotate(inpatient2=hes_death_ht.admi_date >= hes_death_ht.covid_diag_date,
-                                         death=hes_death_ht.death_date >= hes_death_ht.covid_diag_date)  # Compare PCR-Positive Date to Death Date and Admission Date
+    hes_death_ht = hes_death_ht.annotate(inpatient2=(hes_death_ht.admi_date >= hes_death_ht.covid_diag_date) &
+                                                    (hes_death_ht.admi_date < hes_death_ht.covid_diag_date + 86400 * 30),
+                                         death=(hes_death_ht.death_date >= hes_death_ht.covid_diag_date) &
+                                               (hes_death_ht.death_date < hes_death_ht.covid_diag_date + 86400 * 30))  # Compare PCR-Positive Date to Death Date and Admission Date
     hes_death_ht = hes_death_ht.group_by('eid').aggregate(inpatient2=hl.agg.any(hes_death_ht.inpatient2),
                                                           death=hl.agg.any(hes_death_ht.death),
                                                           pcr_result=hl.agg.any(hes_death_ht.pcr_result),

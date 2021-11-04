@@ -1,17 +1,17 @@
 import setuptools
-
+import os
 
 with open("README.md", "r", encoding="utf-8") as readme_file:
     long_description = readme_file.read()
 
-requirements = []
-with open("requirements.txt", "r") as requirements_file:
-    for req in (line.strip() for line in requirements_file):
-        requirements.append(req)
+# requirements = []
+# with open("requirements.txt", "r") as requirements_file:
+#     for req in (line.strip() for line in requirements_file):
+#         requirements.append(req)
 
 setuptools.setup(
     name="ukbb_common",
-    version="0.1.2",
+    version="0.1.3",
     author="",
     author_email="",
     description="Common functions for UK Biobank Data",
@@ -30,7 +30,7 @@ setuptools.setup(
         "Development Status :: 4 - Beta",
     ],
     python_requires=">=3.6",
-    package_dir={"": "src"},
-    packages=setuptools.find_packages(where="src"),
-    install_requires=requirements,
+    package_dir={"ukbb_common": "."},
+    packages=['ukbb_common', 'ukbb_common.resources', 'ukbb_common.utils'],
+    install_requires=['hail', 'batch'],
 )
