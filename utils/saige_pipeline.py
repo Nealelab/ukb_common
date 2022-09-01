@@ -1,5 +1,8 @@
-import batch as hb
-from batch.batch import *
+# import hailtop.batch as hb
+from hailtop.batch.batch import *
+from hailtop.batch import *
+from hailtop.batch.job import *
+from hailtop.batch.resource import *
 from collections import Counter
 from shlex import quote as shq
 import copy
@@ -15,6 +18,7 @@ saige_pheno_types = {
     'biomarkers': 'quantitative',
     'categorical': 'binary',
     'icd': 'binary',
+    'icd10': 'binary',
     'icd_first_occurrence': 'binary',
     'icd_all': 'binary',
     'phecode': 'binary',
@@ -24,7 +28,7 @@ saige_pheno_types = {
 
 def create_sparse_grm(p: Batch, output_path: str, plink_file_root: str, docker_image: str,
                       relatedness_cutoff: str = '0.125', num_markers: int = 2000,
-                      n_threads: int = 8, storage = '1500Mi'):
+                      n_threads: int = 8, storage = None):
     in_bfile = p.read_input_group(
         **{ext: f'{plink_file_root}.{ext}' for ext in ('bed', 'bim', 'fam')})
     create_sparse_grm_task: Job = p.new_job(name='create_sparse_grm')
@@ -49,8 +53,8 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
                         gene: str = None, interval: str = None, groups=None, gene_map_ht_path: str = None,
                         set_missing_to_hom_ref: bool = False, callrate_filter: float = 0.0, adj: bool = True,
                         export_bgen: bool = True, input_dosage: bool = False, reference: str = 'GRCh38',
-                        gene_ht_interval: str = None,
-                        n_threads: int = 8, storage: str = '500Mi', additional_args: str = '', memory: str = ''):
+                        gene_ht_interval: str = None, group_file_only: bool = False, common_variants_only: bool = False,
+                        n_threads: int = 8, storage: str = '50Gi', additional_args: str = '', memory: str = ''):
     if groups is None:
         # groups = {'pLoF', 'missense|LC', 'pLoF|missense|LC', 'synonymous'}
         groups = {'pLoF', 'missense|LC', 'synonymous'}
@@ -83,18 +87,22 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
     {"--input_bgen" if input_dosage else ""}
     {"" if set_missing_to_hom_ref else "--mean_impute_missing"}
     {"" if adj else "--no_adj"} 
+    {"--group_file_only" if group_file_only else ""} 
+    {"--common_variants_only" if common_variants_only else ""} 
     {"--group_output_file " + extract_task.group_file if gene_map_ht_path else ""}
-    --output_file {output_file} | tee {extract_task.stdout}
+    {"" if group_file_only else ("--output_file " + output_file)} | tee {extract_task.stdout}
     ;""".replace('\n', ' ')
 
-    if export_bgen:
-        command += f'\n/bgen_v1.1.4-Ubuntu16.04-x86_64/bgenix -g {extract_task.out.bgen} -index -clobber'
-    else:
-        command += f'\nmv {extract_task.bgz}.bgz {extract_task.out["vcf.gz"]}; tabix {extract_task.out["vcf.gz"]};'
+    if not group_file_only:
+        if export_bgen:
+            command += f'\n/bgen_v1.1.4-Ubuntu16.04-x86_64/bgenix -g {extract_task.out.bgen} -index -clobber'
+        else:
+            command += f'\nmv {extract_task.bgz}.bgz {extract_task.out["vcf.gz"]}; tabix {extract_task.out["vcf.gz"]};'
     extract_task.command(command.replace('\n', ' '))
 
     activate_service_account(extract_task)
-    p.write_output(extract_task.out, output_root)
+    if not group_file_only:
+        p.write_output(extract_task.out, output_root)
     if gene_map_ht_path:
         p.write_output(extract_task.group_file, f'{output_root}.gene.txt')
     p.write_output(extract_task.stdout, f'{output_root}.log')
@@ -102,7 +110,7 @@ def extract_vcf_from_mt(p: Batch, output_root: str, docker_image: str, module: s
 
 
 def export_pheno(p: Batch, output_path: str, pheno_keys, module: str,
-                 docker_image: str, proportion_single_sex: float = 0.1, n_threads: int = 8, storage: str = '500Mi',
+                 docker_image: str, proportion_single_sex: float = 0.1, n_threads: int = 8, storage: str = '10Gi',
                  additional_args: str = ''):
     extract_task: Job = p.new_job(name='extract_pheno', attributes=copy.deepcopy(pheno_keys))
     extract_task.image(docker_image).cpu(n_threads).storage(storage)
@@ -131,7 +139,8 @@ def fit_null_glmm(p: Batch, output_root: str, pheno_file: Resource, trait_type: 
                   plink_file_root: str, docker_image: str, sparse_grm: Resource = None,
                   sparse_grm_extension: str = None, inv_normalize: bool = False, skip_model_fitting: bool = False,
                   min_covariate_count: int = 10,
-                  n_threads: int = 16, storage: str = '1500Mi', memory: str = '60G'):
+                  n_threads: int = 16, storage: str = '10Gi', memory: str = '60G',
+                  non_pre_emptible: bool = False):
     analysis_type = "variant" if sparse_grm is None else "gene"
     pheno_col = 'value'
     user_id_col = 'userId'
@@ -140,7 +149,14 @@ def fit_null_glmm(p: Batch, output_root: str, pheno_file: Resource, trait_type: 
                               attributes={
                                   'analysis_type': analysis_type,
                                   'trait_type': trait_type
-                              }).cpu(n_threads).storage(storage).image(docker_image).memory(memory)
+                              }).storage(storage).image(docker_image)
+    if non_pre_emptible:
+        fit_null_task._cpu = None
+        fit_null_task._memory = None
+        fit_null_task._machine_type = 'n1-highmem-8'
+        fit_null_task._preemptible = False
+    else:
+        fit_null_task = fit_null_task.cpu(n_threads).memory(memory)
     output_files = {ext: f'{{root}}{ext if ext.startswith("_") else "." + ext}' for ext in
                    ('rda', '_30markers.SAIGE.results.txt', f'{analysis_type}.varianceRatio.txt')}
     if analysis_type == 'gene':
@@ -187,7 +203,7 @@ def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: 
               group_file: str = None, sparse_sigma_file: str = None, use_bgen: bool = True,
               trait_type: str = 'continuous',
               chrom: str = 'chr1', min_mac: int = 1, min_maf: float = 0, max_maf: float = 0.5,
-              memory: str = '', storage: str = '500Mi'):
+              memory: str = '', storage: str = '10Gi', add_suffix: str = '', log_pvalue: bool = False):
 
     analysis_type = "gene" if sparse_sigma_file is not None else "variant"
     run_saige_task: Job = p.new_job(name=f'run_saige',
@@ -196,8 +212,8 @@ def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: 
                                     }).cpu(1).storage(storage).image(docker_image)  # Step 2 is single-threaded only
 
     if analysis_type == 'gene':
-        run_saige_task.declare_resource_group(result={'gene.txt': '{root}',
-                                                      'single.txt': '{root}_single'})
+        run_saige_task.declare_resource_group(result={f'{add_suffix}gene.txt': '{root}',
+                                                      f'{add_suffix}single.txt': '{root}_single'})
     else:
         run_saige_task.declare_resource_group(result={'single_variant.txt': '{root}'})
 
@@ -207,7 +223,9 @@ def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: 
                f'--maxMAFforGroupTest={max_maf} '
                f'--sampleFile={samples_file} '
                f'--GMMATmodelFile={model_file} '
+               f'{"--IsOutputlogPforSingle=TRUE " if log_pvalue else ""}'
                f'--varianceRatioFile={variance_ratio_file} '
+               f'--LOCO=FALSE '
                f'--SAIGEOutputFile={run_saige_task.result} ')
 
     if use_bgen:
@@ -228,11 +246,11 @@ def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: 
     command += f'--IsOutputAFinCaseCtrl=TRUE 2>&1 | tee {run_saige_task.stdout}; '
     if analysis_type == 'gene':
         command += f"input_length=$(wc -l {group_file} | awk '{{print $1}}'); " \
-            f"output_length=$(wc -l {run_saige_task.result['gene.txt']} | awk '{{print $1}}'); " \
+            f"output_length=$(wc -l {run_saige_task.result[f'{add_suffix}gene.txt']} | awk '{{print $1}}'); " \
             f"echo 'Got input:' $input_length 'output:' $output_length | tee -a {run_saige_task.stdout}; " \
             f"if [[ $input_length > 0 ]]; then echo 'got input' | tee -a {run_saige_task.stdout}; " \
             f"if [[ $output_length == 1 ]]; then echo 'but not enough output' | tee -a {run_saige_task.stdout}; " \
-                   f"rm -f {run_saige_task.result['gene.txt']} exit 1; fi; fi"
+                   f"rm -f {run_saige_task.result[f'{add_suffix}gene.txt']} exit 1; fi; fi"
     run_saige_task.command(command)
     p.write_output(run_saige_task.result, output_root)
     p.write_output(run_saige_task.stdout, f'{output_root}.{analysis_type}.log')
@@ -242,9 +260,10 @@ def run_saige(p: Batch, output_root: str, model_file: str, variance_ratio_file: 
 def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold,
                            vep_path: str, docker_image: str, gene_map_path: str = None, null_glmm_log: str = '',
                            reference: str = 'GRCh38', saige_log: str = '', analysis_type: str = 'gene',
-                           n_threads: int = 8, storage: str = '500Mi', legacy_annotations: bool = False):
+                           n_threads: int = 8, storage: str = '10Gi', legacy_annotations: bool = False,
+                           log_pvalue: bool = False, overwrite: bool = True):
     load_data_task: Job = p.new_job(name=f'load_data', attributes=copy.deepcopy(pheno_keys)
-                                    ).image(docker_image).cpu(n_threads).storage(storage)
+                                    ).image(docker_image).cpu(n_threads).storage(storage).memory('standard')
     load_data_task.always_run().depends_on(*tasks_to_hold)
     pheno_dict_opts = ' '.join([f"--{k} {shq(v)}" for k, v in pheno_keys.items()])
     python_command = f"""python3 {SCRIPT_DIR}/load_results.py
@@ -255,8 +274,8 @@ def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold
     {"--gene_map_ht_raw_path " + gene_map_path if gene_map_path else ''}
     {"--legacy_annotations" if legacy_annotations else ""}
     --ukb_vep_ht_path {vep_path}
-    --overwrite --reference {reference}
-    --analysis_type {analysis_type}
+    {"--overwrite" if overwrite else ""} --reference {reference}
+    --analysis_type {analysis_type} {"--log_pvalue" if log_pvalue else ""}
     --n_threads {n_threads} | tee {load_data_task.stdout}
     ;""".replace('\n', ' ')
 
@@ -269,7 +288,7 @@ def load_results_into_hail(p: Batch, output_root: str, pheno_keys, tasks_to_hold
 
 
 def qq_plot_results(p: Batch, output_root: str, tasks_to_hold, export_docker_image: str, R_docker_image: str,
-                    n_threads: int = 8, storage: str = '500Mi'):
+                    n_threads: int = 8, storage: str = '10Gi'):
 
     qq_export_task: Job = p.new_job(name='qq_export').image(export_docker_image).cpu(n_threads).storage(storage)
     qq_export_task.always_run().depends_on(*tasks_to_hold)

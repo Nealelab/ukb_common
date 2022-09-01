@@ -19,13 +19,17 @@ def main(args):
         for sex in ('both_sexes', 'female', 'male'):
             mt = hl.read_matrix_table(get_ukb_sumstats_mt_path(sex=sex))
             entry_fields = list(mt.entry)
+            col_fields = list(mt.col)
             mt = mt.filter_entries((mt.pval <= threshold) & ~mt.low_confidence_variant)
-            hts.append(mt.entries().annotate(sex=sex).persist())
+            hts.append(mt.entries().annotate(sex=sex).naive_coalesce(1000).persist())
         ht = hts[0].union(*hts[1:]).key_by()
+        # TODO: fix key, add biomarker data
         ht = ht.select(chrom=ht.locus.contig, pos=ht.locus.position, ref=ht.alleles[0], alt=ht.alleles[1], rsid=ht.rsid,
-                       sex=ht.sex, AF=ht.AF, consequence=ht.consequence, info=ht.info, **{f: ht[f] for f in entry_fields})
+                       sex=ht.sex, AF=ht.AF, consequence=ht.consequence, info=ht.info,
+                       **{f: ht[f] for f in entry_fields}, **{f: ht[f] for f in col_fields})
         ht = ht.checkpoint(get_gwas_sig_path(), overwrite=args.overwrite)
         ht.export(get_gwas_sig_path('tsv.bgz'))
+        ht.drop('PHESANT_transformation', 'notes', 'ytx', 'tstat', 'rsid').export('/tmp/data.tsv.bgz')
 
     if args.create_top_p_file:
         hts = []
@@ -44,6 +48,15 @@ def main(args):
         ht = hl.read_table(get_top_p_path())
         print(f'Found {ht.aggregate(hl.agg.count_where((ht.pval < 5e-8) & (ht.sex == "both_sexes")))} significant hits '
               f'out of {int(ht.count() / 3)} variants.')
+
+    ht = hl.read_table(get_gwas_sig_path())
+    ht = ht.filter(ht.pval < gwas_sig_threshold)
+    pprint(ht.aggregate(hl.struct(
+        total_associations=hl.agg.count(),
+        unique_phenos=hl.len(hl.agg.collect_as_set(ht.phenotype))
+    )))
+    ht = ht.group_by(ht.phenotype).aggregate(n_sig=hl.agg.count())
+    ht.order_by(-ht.n_sig).show()
 
 
 if __name__ == '__main__':

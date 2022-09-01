@@ -44,13 +44,20 @@ def main(args):
             gene_ht = gene_ht.filter(gene_ht.gene_symbol == args.gene)
             interval = gene_ht.aggregate(hl.agg.take(gene_ht.interval, 1), _localize=False)
         else:
-            interval = [hl.parse_locus_interval(args.gene_ht_interval)]
-            gene_ht = hl.filter_intervals(gene_ht, interval)
+            gene_ht = hl.filter_intervals(gene_ht, [hl.parse_locus_interval(args.gene_ht_interval)])
+            interval = [hl.parse_locus_interval(args.interval)]
 
         gene_ht = gene_ht.filter(hl.set(args.groups.split(',')).contains(gene_ht.annotation))
-        gene_ht.select(group=gene_ht.gene_id + '_' + gene_ht.gene_symbol + '_' + gene_ht.annotation, variant=hl.delimit(gene_ht.variants, '\t')
+        if args.common_variants_only:
+            gene_ht = gene_ht.filter(gene_ht.common_variant)
+        gene_ht.select(group=gene_ht.gene_id + '_' + gene_ht.gene_symbol + '_' + gene_ht.annotation +
+                       hl.if_else(gene_ht.common_variant, '_' + gene_ht.variants[0], ''),
+                       variant=hl.delimit(gene_ht.variants, '\t')
                        ).key_by().drop('start').export(args.group_output_file, header=False)
         # TODO: possible minor optimization: filter output VCF to only variants in `gene_ht.variants`
+
+    if args.group_file_only:
+        return
 
     if not args.no_adj:
         mt = mt.filter_entries(mt.adj)
@@ -99,7 +106,9 @@ if __name__ == '__main__':
     parser.add_argument('--reference', help='Reference genome to use', default='GRCh38', choices=('GRCh37', 'GRCh38'))
 
     parser.add_argument('--group_output_file', help='Output file for variant groupings')
-    parser.add_argument('--output_file', help='Output file', required=True)
+    parser.add_argument('--group_file_only', help='Only output variant groupings (no VCF or BGEN)', action='store_true')
+    parser.add_argument('--common_variants_only', help='Only output common variants', action='store_true')
+    parser.add_argument('--output_file', help='Output file')
     parser.add_argument('--n_threads', help='Number of threads', type=int, default=8)
     args = parser.parse_args()
 

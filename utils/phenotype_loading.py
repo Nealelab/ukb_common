@@ -399,6 +399,7 @@ def combine_pheno_files(pheno_file_dict: dict):
 
 def compute_cases_binary(field, sex_field):
     return dict(
+        n_cases_defined=hl.agg.count_where(field & hl.is_defined(sex_field)),
         n_cases_both_sexes=hl.agg.count_where(field),
         n_cases_females=hl.agg.count_where(field & (sex_field == 0)),
         n_cases_males=hl.agg.count_where(field & (sex_field == 1))
@@ -530,12 +531,27 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
     for data_type, mt in pheno_file_dict.items():
         mt = mt.select_rows(**cov_ht[mt.row_key])
         print(data_type)
+        mt.describe()
         if data_type == 'custom':
+            def case_count(field, trait_type):
+                return hl.if_else(trait_type == 'categorical', field == 1.0, hl.is_defined(field))
             mt = mt.select_entries(**format_entries(mt.value, mt.sex))
-            mt = mt.select_cols(**{f'n_cases_{sex}': hl.agg.count_where(
-                hl.cond(mt.trait_type == 'categorical', mt[sex] == 1.0, hl.is_defined(mt[sex]))
+            mt = mt.select_cols(n_cases_defined=hl.agg.count_where(case_count(mt.both_sexes, mt.trait_type) & hl.is_defined(mt.sex)),
+                **{f'n_cases_{sex}': hl.agg.count_where(case_count(mt[sex], mt.trait_type)
             ) for sex in sexes}, **{extra_col: mt[extra_col] if extra_col in list(mt.col) else NULL_STR
                                     for extra_col in PHENO_DESCRIPTION_FIELDS})
+        elif data_type == 'random':
+            col_fields = mt.col_id.split('_')
+            mt = mt.key_cols_by(
+                trait_type=hl.if_else(col_fields[2] == 'continuous', 'continuous', 'categorical'),
+                phenocode='random_' + col_fields[2], pheno_sex='both_sexes', coding=col_fields[3],
+                modifier=hl.if_else(col_fields[1] == '1', NULL_STR_KEY, col_fields[1])
+            ).drop('col_id')
+            mt = mt.annotate_cols(
+                **compute_cases_binary(hl.if_else(mt.trait_type == 'categorical', hl.bool(mt.x), hl.is_defined(mt.x)), mt.sex),
+                description='Random pheno with GRM covariance structure',
+                description_more=NULL_STR, coding_description=NULL_STR, category=NULL_STR)
+            mt = mt.select_entries(**format_entries(mt.x, mt.sex))
         elif data_type in ('categorical', 'continuous'):
 
             def get_non_missing_field(mt, field_name):
@@ -574,6 +590,7 @@ def combine_pheno_files_multi_sex(pheno_file_dict: dict, cov_ht: hl.Table, trunc
             mt = mt.select_cols(**compute_cases_binary(mt.both_sexes == 1.0, mt.sex),
                                 description=mt.Field, description_more=mt.Notes,
                                 coding_description=NULL_STR, category=mt.Path)
+            mt = mt.key_rows_by(userId=mt.eid)
         else: # 'biomarkers', 'activity_monitor'
             mt = mt.key_cols_by(trait_type=mt.trait_type if 'trait_type' in list(mt.col) else data_type,
                                 phenocode=hl.str(mt.pheno), pheno_sex='both_sexes', coding=NULL_STR_KEY, modifier=NULL_STR_KEY)

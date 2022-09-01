@@ -56,15 +56,19 @@ def annotation_case_builder_ukb_legacy(worst_csq_by_gene_canonical_expr):
             .when((worst_csq_by_gene_canonical_expr.most_severe_consequence == 'missense_variant') |
                   (worst_csq_by_gene_canonical_expr.most_severe_consequence == 'inframe_insertion') |
                   (worst_csq_by_gene_canonical_expr.most_severe_consequence == 'inframe_deletion'), 'missense')
+            # TODO: add stop/start lost
             .when(worst_csq_by_gene_canonical_expr.most_severe_consequence == 'synonymous_variant', 'synonymous')
             .or_missing())
 
 
-def create_gene_map_ht(ht, check_gene_contigs=False):
+def create_gene_map_ht(ht, check_gene_contigs=False, freq_field=None):
     from gnomad.utils.vep import process_consequences
 
+    if freq_field is not None:
+        ht = ht.annotate(_af=freq_field)
     ht = process_consequences(ht)
     ht = ht.explode(ht.vep.worst_csq_by_gene_canonical)
+    ht = ht.filter(ht.vep.worst_csq_by_gene_canonical.gene_id.startswith('ENSG'))
     ht = ht.annotate(
         variant_id=ht.locus.contig + ':' + hl.str(ht.locus.position) + '_' + ht.alleles[0] + '/' + ht.alleles[1],
         annotation=annotation_case_builder(ht.vep.worst_csq_by_gene_canonical))
@@ -77,6 +81,7 @@ def create_gene_map_ht(ht, check_gene_contigs=False):
         )
         assert gene_contigs.all(hl.len(gene_contigs.contigs) == 1)
 
+    collect_field = (ht.variant_id, ht._af) if freq_field is not None else ht.variant_id
     gene_map_ht = ht.group_by(
         gene_id=ht.vep.worst_csq_by_gene_canonical.gene_id,
         gene_symbol=ht.vep.worst_csq_by_gene_canonical.gene_symbol,
@@ -85,17 +90,23 @@ def create_gene_map_ht(ht, check_gene_contigs=False):
             start=hl.locus(hl.agg.take(ht.locus.contig, 1)[0], hl.agg.min(ht.locus.position)),
             end=hl.locus(hl.agg.take(ht.locus.contig, 1)[0], hl.agg.max(ht.locus.position))
         ),
-        variants=hl.agg.group_by(ht.annotation, hl.agg.collect(ht.variant_id)),
+        variants=hl.agg.group_by(ht.annotation, hl.agg.collect(collect_field)),
     )
     return gene_map_ht
 
 
-def post_process_gene_map_ht(gene_ht):
+def post_process_gene_map_ht(gene_ht, freq_cutoff=None):
     groups = ['pLoF', 'missense|LC', 'pLoF|missense|LC', 'synonymous', 'missense']
     variant_groups = hl.map(lambda group: group.split('\\|').flatmap(lambda csq: gene_ht.variants.get(csq)), groups)
     gene_ht = gene_ht.transmute(
         variant_groups=hl.zip(groups, variant_groups)
     ).explode('variant_groups')
     gene_ht = gene_ht.transmute(annotation=gene_ht.variant_groups[0], variants=hl.sorted(gene_ht.variant_groups[1]))
+    if freq_cutoff is not None:
+        common_variants: hl.expr.ArrayExpression = gene_ht.variants.filter(lambda x: x[1] >= freq_cutoff)
+        rare_variants = gene_ht.variants.filter(lambda x: x[1] < freq_cutoff)
+        variants = common_variants.map(lambda x: (gene_ht.annotation, True, [x])).append((gene_ht.annotation, False, rare_variants))
+        gene_ht = gene_ht.select('interval', variants=variants).explode('variants')
+        gene_ht = gene_ht.transmute(annotation=gene_ht.variants[0], common_variant=gene_ht.variants[1], variants=hl.sorted(gene_ht.variants[2].map(lambda x: x[0])))
     gene_ht = gene_ht.key_by(start=gene_ht.interval.start)
     return gene_ht.filter(hl.len(gene_ht.variants) > 0)

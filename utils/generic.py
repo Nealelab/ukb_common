@@ -9,9 +9,13 @@ UKB_GNOMAD_POP_MAPPING = {'AFR': 'afr',
                           'MID': 'mid'}
 
 
-def pull_out_fields_from_entries(mt, shared_fields, index='rows'):
+def pull_out_fields_from_entries(mt, shared_fields, index='rows', agg_funcs=None):
     func = mt.annotate_rows if index == 'rows' else mt.annotate_cols
-    mt = func(**{f'_{field}': hl.agg.take(mt[field], 1)[0] for field in shared_fields})
+    if agg_funcs is None:
+        agg_funcs = [hl.agg.take for _ in shared_fields]
+    elif not isinstance(agg_funcs, list):
+        agg_funcs = [agg_funcs for _ in shared_fields]
+    mt = func(**{f'_{field}': agg_func(mt[field]) for agg_func, field in zip(agg_funcs, shared_fields)})
     return mt.drop(*shared_fields).rename({f'_{field}': field for field in shared_fields})
 
 

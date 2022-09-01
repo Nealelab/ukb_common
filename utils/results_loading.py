@@ -35,7 +35,8 @@ def get_vep_formatted_data(ukb_vep_path: str, legacy_annotations: bool = False):
 
 def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extension: str = 'single.txt',
                       n_cases: int = -1, n_controls: int = -1, heritability: float = -1.0,
-                      saige_version: str = 'NA', inv_normalized: str = 'NA', overwrite: bool = False, legacy_annotations: bool = False,
+                      saige_version: str = 'NA', inv_normalized: str = 'NA', log_pvalue: bool = False,
+                      overwrite: bool = False, legacy_annotations: bool = False,
                       num_partitions: int = 1000):
     output_ht_path = f'{directory}/variant_results.ht'
     ht = hl.import_table(f'{directory}/*.{extension}', delimiter=' ', impute=True)
@@ -51,10 +52,11 @@ def load_variant_data(directory: str, pheno_key_dict, ukb_vep_path: str, extensi
     ht = ht.key_by(locus=hl.parse_locus(locus_alleles[0]), alleles=locus_alleles[1].split('/'),
                    **pheno_key_dict).distinct().naive_coalesce(num_partitions)
     if marker_id_col == 'SNPID':
-        ht = ht.drop('CHR', 'POS', 'rsid', 'Allele1', 'Allele2')
+        ht = ht.drop('CHR', 'POS', 'SNPID', 'Allele1', 'Allele2')
     ht = ht.transmute(Pvalue=ht['p.value']).annotate_globals(
-        n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version, inv_normalized=inv_normalized)
-    ht = ht.drop('varT', 'varTstar', 'N', 'Tstat')
+        n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version,
+        inv_normalized=inv_normalized, log_pvalue=log_pvalue)
+    ht = ht.drop('N', 'Tstat')
     ht = ht.annotate(**get_vep_formatted_data(ukb_vep_path, legacy_annotations=legacy_annotations)[
         hl.struct(locus=ht.locus, alleles=ht.alleles)])  # TODO: fix this for variants that overlap multiple genes
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls', 'heritability')
@@ -78,6 +80,7 @@ def load_gene_data(directory: str, pheno_key_dict, gene_ht_map_path: str,
     if saige_version == 'NA': saige_version = hl.null(hl.tstr)
     if inv_normalized == 'NA': inv_normalized = hl.null(hl.tstr)
 
+    ht = ht.filter(hl.len(ht.Gene.split('_')) == 3)
     fields = ht.Gene.split('_')
     gene_ht = hl.read_table(gene_ht_map_path).select('interval').distinct()
     ht = ht.key_by(gene_id=fields[0], gene_symbol=fields[1], annotation=fields[2],
@@ -85,6 +88,7 @@ def load_gene_data(directory: str, pheno_key_dict, gene_ht_map_path: str,
         n_cases=n_cases, n_controls=n_controls, heritability=heritability, saige_version=saige_version, inv_normalized=inv_normalized)
     ht = ht.annotate(total_variants=hl.sum([v for k, v in list(ht.row_value.items()) if 'Nmarker' in k]),
                      interval=gene_ht.key_by('gene_id')[ht.gene_id].interval)
+    # ht = ht.group_by(*list(ht.key)).aggregate(**(hl.agg.take(ht.row_value, 1, -ht.total_variants)[0])) # TODO: add for megabase spanning bug
     ht = ht.checkpoint(output_ht_path, overwrite=overwrite, _read_if_exists=not overwrite).drop('n_cases', 'n_controls')
     # mt = ht.to_matrix_table(['gene_symbol', 'gene_id', 'annotation', 'interval'],
     #                         list(pheno_key_dict.keys()), [], []).annotate_cols(
@@ -290,14 +294,14 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
     """
     assert ht.head(1).annotation.collect()[0] is None, f'failed at {patch_case_control_count}'
     if 'AF.Cases' not in list(ht.row):
-        ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
+        ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'BETA', 'SE',
                        **{'p.value.NA': hl.null(hl.tfloat64), 'Is.SPA.converge': hl.null(hl.tint32),
-                          'varT': ht.varT, 'varTstar': ht.varTstar, 'AF.Cases': hl.null(hl.tfloat64),
+                          'AF.Cases': hl.null(hl.tfloat64),
                           'AF.Controls': hl.null(hl.tfloat64), 'Pvalue': ht.Pvalue,
                           'gene': hl.or_else(ht.gene, ''), 'annotation': hl.or_else(ht.annotation, '')})
     else:
-        ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'N', 'BETA', 'SE', 'Tstat',
-                       'p.value.NA', 'Is.SPA.converge', 'varT', 'varTstar', 'AF.Cases',
+        ht = ht.select('AC_Allele2', 'AF_Allele2', 'imputationInfo', 'BETA', 'SE',
+                       'p.value.NA', 'Is.SPA.converge', 'AF.Cases',
                        'AF.Controls', 'Pvalue', gene=hl.or_else(ht.gene, ''), annotation=hl.or_else(ht.annotation, ''))
 
     ht2 = ht.head(1)
@@ -318,6 +322,8 @@ def unify_saige_ht_schema(ht, patch_case_control_count: str = ''):
         ht = ht.annotate_globals(heritability=hl.null(hl.tfloat64))
     if 'saige_version' not in list(ht.globals):
         ht = ht.annotate_globals(saige_version=hl.null(hl.tstr))
+    if 'log_pvalue' not in list(ht.globals):
+        ht = ht.annotate_globals(log_pvalue=False)
     return ht
 
 
@@ -330,6 +336,7 @@ def stringify_pheno_key_dict(pheno_key_dict, format_phenocode_field: bool = Fals
 
 def get_results_prefix(pheno_results_dir, pheno_key_dict, chromosome, start_pos, legacy: bool = False):
     prefix = f'{pheno_results_dir}/result_'
+    # prefix = f'{pheno_results_dir}/result_megabase_span_'  # TODO: add for megabase spanning bug
     if legacy:
         prefix += format_pheno_dir(pheno_key_dict["phenocode"])
     else:
@@ -417,6 +424,7 @@ def unify_saige_ht_variant_schema(ht):
     new_ints = ('N.Cases', 'N.Controls')
     shared_end = ('Pvalue', 'gene', 'annotation')
     if 'AF.Cases' not in list(ht.row):
+        # TODO: store AF in AF.cases
         ht = ht.select(*shared, **{field: hl.null(hl.tfloat64) for field in new_floats},
                        **{field: hl.null(hl.tint32) for field in new_ints},
                        **{field: ht[field] for field in shared_end})
@@ -491,7 +499,7 @@ def generate_lambda_ht_by_freq(mt):
     af_cases = mt['AF.Cases']
     ac_cases = af_cases * mt.n_cases * 2
     af_total = mt['AF_Allele2']
-    p_value_field = mt.Pvalue
+    p_value_field = hl.exp(mt.Pvalue)
     breakdown_dict_tuple = (('by_case', {'ac': ac_cases}), ('by', {'af': af_total}))
     mt = mt.annotate_cols(sumstats_qc=generate_qc_lambda_aggregator(breakdown_dict_tuple, p_value_field)).annotate_globals(ac_cutoffs=AC_CUTOFFS, af_cutoffs=AF_CUTOFFS)
     return mt.cols()
