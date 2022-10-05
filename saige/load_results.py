@@ -2,7 +2,7 @@
 
 __author__ = 'konradk'
 
-from ukb_common import *
+from ukbb_common import *
 import argparse
 import tempfile
 
