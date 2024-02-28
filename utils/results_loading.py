@@ -452,10 +452,18 @@ def get_n_even_intervals(n):
     ref = hl.default_reference()
     genome_size = sum(ref.lengths.values())
     partition_size = int(genome_size / n) + 1
-    return list(map(
-        lambda x: hl.Interval(hl.eval(hl.locus_from_global_position(x * partition_size)),
-                              hl.eval(hl.locus_from_global_position(min(x * partition_size + partition_size, genome_size - 1)))),
-        range(n)))
+    global_locus_intervals = [
+        (x * partition_size, min(x * partition_size + partition_size, genome_size - 1))
+        for x in range(n)
+    ]
+    return list((
+        map(
+            lambda x: hl.interval(
+                hl.locus_from_global_position(x[0]),
+                hl.locus_from_global_position(x[1])
+            ), global_locus_intervals
+        )
+    ))
 
 
 def mwzj_hts_by_tree(all_hts, temp_dir, globals_for_col_key, debug=False, inner_mode = 'overwrite',
