@@ -458,9 +458,9 @@ def get_n_even_intervals(n):
     ]
     return list((
         map(
-            lambda x: hl.interval(
-                hl.locus_from_global_position(x[0]),
-                hl.locus_from_global_position(x[1])
+            lambda x: hl.Interval(
+                hl.get_reference('default').locus_from_global_position(x[0]),
+                hl.get_reference('default').locus_from_global_position(x[1])
             ), global_locus_intervals
         )
     ))
